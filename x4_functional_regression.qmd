@@ -1,0 +1,359 @@
+---
+title: "Extension IV: Ill-Posed Inverse Problem in Scalar-on-Function Regression"
+---
+
+```{r}
+#| message: false
+#| warning: false
+
+library(fda.usc)
+library(knitr)
+library(pracma)
+library(latex2exp)
+```
+
+This extension explores the functional linear model $Y = \alpha + \langle X, \beta\rangle + \epsilon$, framing the estimation of the slope function $\beta$ as an ill-posed inverse problem. This problem, along with the development of spectral truncation and Tikhonov regularisation estimators, follows the foundational framework established by Hall and Horowitz (2007). The overarching goal of that literature is to establish asymptotic guarantees for functional regression in infinite-dimensional Hilbert spaces. Rather than relying on heuristic tuning, Hall and Horowitz derive optimal nonparametric convergence rates and analyze the asymptotic behavior of regularised estimators under conditions of polynomial eigenvalue decay. The nature of their proofs centers on bounding the stochastic errors of empirical covariance operators and evaluating the mathematical trade-off between approximation bias and variance inflation as sample sizes grow.
+
+To formalise this setting, The population normal equation for the $\beta$ minimising $E(Y - \alpha - \langle X,\beta\rangle)^2$ is:
+
+$$\Gamma\beta = r, \qquad (\Gamma f)(s) = \int_T C(s,t)f(t)\,dt,\quad r(t) = E\big[(Y-\mu_Y)(X(t) - \mu(t))\big]$$
+
+where $\Gamma$ is the covariance operator of $X$ (Hall and Horowitz, 2007, Sec.2). Formally $\hat\beta = \Gamma^{-1}r$. However, $\Gamma$ is a compact operator, meaning it smooths and compresses high-frequency details down to zero ($\lambda_k \to 0$). Because reversing this compression requires an infinite stretch factor, its inverse $\Gamma^{-1}$ is unbounded, multiplying the $k$-th eigencomponent by $1/\lambda_k \to \infty$.
+
+Despite the heavily theoretical lens of the literature, the primary aim of this extension is to implement the mathematical machinery largely from first principles for a relevant problem. Implementations in this extension,however, numerically approximate continuous integrals using `pracma::trapz`.
+
+### Regularisation Strategies
+
+#### 1. Spectral Truncation (FPCR)
+
+Functional Principal Component Regression (FPCR) projects the data onto the first $K$ eigenfunctions of the empirical covariance operator. Following Hall and Horowitz (2007, eq. 2.3 and 2.4), the resulting well-posed $K \times K$ problem is solved by:
+
+$$\hat\beta_K(u) = \sum_{j=1}^{K} \hat{b}_j\hat{\phi}_j(u), \qquad \hat{b}_j = \frac{\hat{g}_j}{\hat{\lambda}_j}, \qquad \hat{g}_j = \int \hat{g}(u)\hat{\phi}_j(u)du$$
+
+where $\hat{g}(u) = \frac{1}{n}\sum_{i=1}^n (Y_i - \bar{Y})(X_i(u) - \bar{X}(u))$.
+
+In these formulas, $\hat{\phi}_j(u)$ is the $j$-th empirical eigenfunction, $\hat{\lambda}_j$ is the corresponding empirical eigenvalue, and $\hat{g}(u)$ is the sample cross-covariance function between $X$ and $Y$. By terminating the sum exactly at $K$, this method applies a cutoff to the spectral expansion. It fully retains the first $K$ principal components but discards the tail components whose sufficiently small eigenvalues would otherwise blow up the variance.
+
+Computationally, $\hat{b}_j$ is exactly the OLS estimate of $Y$ regressed onto the $j$-th functional principal component score.
+
+```{r}
+
+# Trapezoidal quadrature weights
+quad_w <- function(tt) {
+  d <- diff(tt)
+  c(d[1] / 2, (d[-1] + d[-length(d)]) / 2, d[length(d)] / 2)
+}
+
+fpcr_prep <- function(X, tt) {
+  w    <- quad_w(tt)
+  xbar <- colMeans(X)
+  Xc   <- sweep(X, 2, xbar)
+  sw   <- sqrt(w)
+  # Symmetrised operator: diag(sqrt(w)) C diag(sqrt(w)).
+  G  <- crossprod(Xc * rep(sw, each = nrow(Xc))) / nrow(X)
+  ev <- eigen(G, symmetric = TRUE)
+  list(phi = ev$vectors / sw, lam = ev$values, xbar = xbar, w = w, tt = tt)
+}
+
+fpcr_scores <- function(pp, X, K) {
+  sweep(X, 2, pp$xbar) %*% (pp$phi[, 1:K, drop = FALSE] * pp$w)
+}
+
+fpcr_fit <- function(pp, X, y, K) {
+  scores <- fpcr_scores(pp, X, K)
+  
+  # OLS
+  Z <- cbind(1, scores)
+  co <- solve(t(Z) %*% Z) %*% t(Z) %*% y
+  
+  alpha <- co[1]
+  coef <- co[-1]
+  
+  
+  # beta(t) = sum(b_k * phi_k(t))
+  phi_K <- pp$phi[, 1:K, drop = FALSE]
+  beta <- phi_K %*% coef
+  
+  list(alpha = alpha, coef = coef, beta = drop(beta), pp = pp, K = K)
+}
+
+fpcr_predict <- function(fit, Xnew) {
+  scores <- fpcr_scores(fit$pp, Xnew, fit$K)
+  y_hat <- fit$alpha + (scores %*% fit$coef)
+  
+  return(drop(y_hat))
+}
+
+fpcr_cv <- function(pp, X, y, Kmax) {
+  n <- length(y)
+  Zall <- cbind(1, fpcr_scores(pp, X, Kmax))
+  
+  cv_errors <- numeric(Kmax)
+  cv_ses <- numeric(Kmax)
+  
+  for (K in 1:Kmax) {
+    Z_K <- Zall[, 1:(K + 1), drop = FALSE]
+    
+    # Use QR decomp for numerical stability of the hat matrix
+    q <- qr(Z_K)
+    Q <- qr.Q(q)
+    
+    # Fitted values and h_ii
+    y_hat <- drop(Q %*% (t(Q) %*% y))
+    h_ii <- rowSums(Q^2)
+    
+    # Leave-one-out residuals shortcut formula: (y - y_hat) / (1 - h_ii)
+    # no ways am i training and fitting N times
+    loo_res <- (y - y_hat) / (1 - h_ii)
+    e2 <- loo_res^2
+    
+    cv_errors[K] <- mean(e2)
+    cv_ses[K] <- sd(e2) / sqrt(n)
+  }
+  
+  data.frame(cv = cv_errors, se = cv_ses)
+}
+```
+
+#### 2. Tikhonov (Functional Ridge) Regularisation
+
+Instead of a hard cutoff, the functional ridge estimator adds a penalty $\lambda I$ before inverting. Following Hall and Horowitz (2007, eq. 2.5), the estimator is defined as:
+
+$$\hat\beta_\lambda = (\hat\Gamma_n + \lambda I)^{-1}\hat r$$
+
+In the eigenbasis, this smoothly shrinks the $k$-th component by the factor $\frac{\hat{\mu}_k}{\hat{\mu}_k + \lambda}$ rather than discarding it entirely.
+
+```{r}
+
+# any eigenvalue that has collapsed to numerical zero is dropped.
+tik_Kmax <- function(pp, n) min(n - 1, sum(pp$lam > 1e-10 * pp$lam[1]))
+
+tik_fit <- function(pp, X, y, lambda) {
+  n    <- nrow(X)
+  Kmax <- tik_Kmax(pp, n)
+
+  # Scores xi_ik = <X_i - Xbar, phi_k>_w 
+  xi <- fpcr_scores(pp, X, Kmax)
+  mu <- pp$lam[1:Kmax]
+
+  
+  # b_k = xi_k' (y - ybar) / (n (mu_k + lambda))
+  yc   <- y - mean(y)
+  coef <- drop(crossprod(xi, yc)) / n / (mu + lambda)
+
+
+  alpha <- mean(y) - sum(colMeans(xi) * coef)
+
+  # beta(t) = sum_k coef_k * phi_k(t)
+  phi_K <- pp$phi[, 1:Kmax, drop = FALSE]
+  beta  <- phi_K %*% coef
+
+  list(alpha = alpha, coef = coef, beta = drop(beta), pp = pp, K = Kmax,
+       mu = mu, shrink = mu / (mu + lambda))
+}
+
+tik_cv <- function(pp, X, y, lambdas) {
+  n    <- nrow(X)
+  Kmax <- tik_Kmax(pp, n)
+
+  xi <- fpcr_scores(pp, X, Kmax)
+  mu <- pp$lam[1:Kmax]
+  yc <- y - mean(y)
+
+  cv_errors <- numeric(length(lambdas))
+  cv_ses    <- numeric(length(lambdas))
+
+  for (i in seq_along(lambdas)) {
+    lambda <- lambdas[i]
+
+
+    H <- 1 / n + xi %*% ((1 / (n * (mu + lambda))) * t(xi))
+
+    y_hat   <- drop(H %*% yc)
+    h_ii    <- diag(H)
+    loo_res <- (yc - y_hat) / (1 - h_ii)
+    e2      <- loo_res^2
+
+    cv_errors[i] <- mean(e2)
+    cv_ses[i]    <- sd(e2) / sqrt(n)
+  }
+
+  data.frame(cv = cv_errors, se = cv_ses)
+}
+```
+
+### Case Study: Tecator Benchmark
+
+The empirical evaluation of these regularisation methods utilises the Tecator dataset, which consists of 215 continuous near-infrared absorbance spectra measured across 100 equally spaced wavelengths to predict the fat content of meat samples. Because adjacent spectral wavelengths exhibit extreme collinearity, attempting to regress the scalar response directly onto the discretised curves without regularisation triggers the catastrophic variance amplification inherent to compact operators.
+
+```{r}
+#| fig-width: 8
+#| fig-height: 4.5
+#| fig-cap: "Observed Tecator near-infrared absorbance spectra. The curves are smooth, densely sampled, and highly collinear."
+
+data(tecator)
+tt    <- tecator$absorp.fdata$argvals
+Xall  <- tecator$absorp.fdata$data
+yall  <- tecator$y$Fat
+
+plot(tt, Xall[1, ], type = "l", col = adjustcolor("steelblue", 0.5), 
+     ylim = range(Xall), xlab = "Wavelength (nm)", ylab = "Absorbance", 
+     main = "Tecator NIR Absorbance Spectra")
+for (i in 2:nrow(Xall)) {
+  lines(tt, Xall[i, ], col = adjustcolor("steelblue", 0.5))
+}
+```
+
+To demonstrate the mechanical benefit of regularisation, the data is partitioned into a 70/30 training and testing split. The analysis benchmarks the unregularised naive operator inversion against Functional Principal Component Regression (FPCR) and Tikhonov regularisation. Two FPCR fits are reported, one using the cross-validated minimum and one using the one-standard-error rule, because the choice of truncation rule turns out to matter as much as the choice of estimator. By either truncating or smoothly shrinking the smallest eigenvalues of the empirical covariance operator, regularisation prevents the unbounded inverse operator from multiplying microscopic sample noise by massive reciprocal eigenvalues.
+
+```{r}
+#| tbl-cap: "Predictive performance of unregularised and regularised estimators on the Tecator test set."
+n_tec <- nrow(Xall)
+set.seed(1409)
+train_idx <- sample(n_tec, round(0.7 * n_tec))
+Xtr <- Xall[train_idx, ]; ytr <- yall[train_idx]
+Xte <- Xall[-train_idx, ]; yte <- yall[-train_idx]
+
+# 1se the minimum
+pick_1se <- function(cvdf) {
+  m  <- which.min(cvdf$cv)
+  ok <- which(cvdf$cv <= cvdf$cv[m] + cvdf$se[m])
+  min(ok)
+}
+
+# Prepare Data & Fit Unregularised Baseline
+pp_tr <- fpcr_prep(Xtr, tt)
+fit_naive <- fpcr_fit(pp_tr, Xtr, ytr, 40)
+
+# FPCR
+cv_K <- fpcr_cv(pp_tr, Xtr, ytr, 30)
+K_min <- which.min(cv_K$cv)
+K_1se <- pick_1se(cv_K)
+fit_fpcr_min <- fpcr_fit(pp_tr, Xtr, ytr, K_min)
+fit_fpcr_1se <- fpcr_fit(pp_tr, Xtr, ytr, K_1se)
+
+#  Tikhonov
+lambdas <- 10^seq(-6, 0, by = 0.25)
+cv_tik <- tik_cv(pp_tr, Xtr, ytr, lambdas)
+fit_tik <- tik_fit(pp_tr, Xtr, ytr, lambdas[which.min(cv_tik$cv)])
+
+
+
+preds <- list(
+  "Unregularised (K=40)" = fpcr_predict(fit_naive, Xte),
+  "FPCR (min)" = fpcr_predict(fit_fpcr_min, Xte),
+  "FPCR (1se)" = fpcr_predict(fit_fpcr_1se, Xte),
+  "Tikhonov"  = fpcr_predict(fit_tik, Xte)
+)
+
+rmse     <- sapply(preds, function(p) sqrt(mean((p - yte)^2)))
+r2       <- sapply(preds, 
+              function(p) 1 - sum((p - yte)^2) / sum((yte - mean(yte))^2))
+
+
+kable(data.frame(Model = names(preds),
+                 RMSE = round(rmse, 3),
+                 R2   = round(r2, 3)))
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 7
+#| fig-cap: "Estimated coefficient functions on a unified scale."
+
+par(mfrow = c(2, 2))
+yl_global <- range(c(fit_naive$beta, fit_fpcr_min$beta, fit_fpcr_1se$beta, 
+                     fit_tik$beta))
+
+plot(tt, fit_naive$beta, type = "l", col = "red", ylim = yl_global,
+     xlab = "Wavelength (nm)", ylab = expression(hat(beta)(t)),
+     main = "Unregularised (K=40)")
+abline(h = 0, lty = 3)
+
+plot(tt, fit_fpcr_min$beta, type = "l", col = "forestgreen", 
+     ylim = yl_global, xlab = "Wavelength (nm)", 
+     ylab = expression(hat(beta)(t)),
+     main = paste0("FPCR, min rule (K = ", K_min, ")"))
+abline(h = 0, lty = 3)
+
+plot(tt, fit_fpcr_1se$beta, type = "l", col = "darkorange",
+     ylim = yl_global, xlab = "Wavelength (nm)",
+     ylab = expression(hat(beta)(t)),
+     main = paste0("FPCR, 1se rule (K = ", K_1se, ")"))
+abline(h = 0, lty = 3)
+
+plot(tt, fit_tik$beta, type = "l", col = "blue", ylim = yl_global,
+     xlab = "Wavelength (nm)", ylab = expression(hat(beta)(t)),
+     main = "Tikhonov")
+abline(h = 0, lty = 3)
+
+par(mfrow = c(1, 1))
+```
+
+The plots above make two features of truncation visible that the performance metrics alone do not. First, FPCR at the cross-validated minimum retains enough tail components that the reciprocal eigenvalues dominate the coefficient function, and the fitted curve is inflated to the same order of magnitude as the unregularised fit even though its out-of-sample predictions are stable. Second, the one-standard-error rule collapses the same estimator back to a curve of ordinary size, but only by discarding a noticeable block of components whose contribution to prediction was real. Truncation therefore forces an all-or-nothing decision on the tail: keep enough components to predict well and the coefficient function becomes uninterpretable, or shrink the coefficient function to an interpretable size and give up some predictive accuracy.
+
+The two regularised fits are compared directly on their own scale in the next figure, with the unregularised fit omitted because its amplitude would compress everything else to a flat line.
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4.5
+#| fig-cap: "FPCR (1se) and Tikhonov on their own scale."
+
+plot(tt, fit_fpcr_1se$beta, type = "l", col = "darkorange", lwd = 2,
+     ylim = range(c(fit_fpcr_1se$beta, fit_tik$beta)),
+     xlab = "Wavelength (nm)", ylab = expression(hat(beta)(t)))
+lines(tt, fit_tik$beta, col = "blue", lwd = 2)
+abline(h = 0, lty = 3)
+legend("topleft", c(paste0("FPCR, K = ", K_1se), "Tikhonov"),
+       col = c("darkorange", "blue"), lwd = 2, bty = "n")
+```
+
+Comparing the two regularised fits on their own scale reveals a stark contrast in smoothness and structural interpretation. FPCR at the one-standard-error rule is remarkably smooth, driven by its strict confinement to the leading, low-frequency eigenfunctions. Interestingly, despite being drastically scaled down, it traces a nearly identical structural path to the inflated minimum-rule fit: both exhibit a distinct negative dip near 920 nm followed by a sharp terminal rise. This confirms that the core chemical signature is encoded in the leading components, while the discarded tail merely acts as an inflationary multiplier.
+
+Tikhonov, by contrast, operates on a noticeably larger amplitude at this scale and exhibits high-frequency oscillation across the entire domain. Because it never completely zeroes out any eigendirection, the heavily down-weighted tail components manifest as a jagged ripple riding over the baseline function. This flips the conventional narrative on regularisation tradeoffs. While Tikhonov achieves the superior predictive accuracy with the lowest RMSE and highest $R^2$, its coefficient function sacrifices chemical interpretability to high-frequency noise. FPCR at the one-standard-error rule willingly sacrifices a fraction of predictive power to deliver a smooth, readable coefficient function.
+
+```{r}
+#| tbl-cap: "5-Number Summary of Absolute Deviations from Zero"
+
+betas_abs <- list(
+  "Unregularised"    = abs(fit_naive$beta),
+  "FPCR (min rule)"  = abs(fit_fpcr_min$beta),
+  "FPCR (1-SE rule)" = abs(fit_fpcr_1se$beta),
+  "Tikhonov"         = abs(fit_tik$beta)
+)
+
+five_num_stats <- data.frame(t(sapply(betas_abs, fivenum)))
+colnames(five_num_stats) <- c("Min", "Q1", "Median", "Q3", "Max")
+
+kable(five_num_stats, digits = 3)
+```
+
+The summary statistics reinforce the visual impression of magnitude while highlighting the disconnect between amplitude and smoothness. The unregularised fit and the FPCR minimum-rule fit produce coefficient functions stretching into the thousands. The one-standard-error rule successfully collapses the FPCR median absolute deviation by two orders of magnitude. Tikhonov sits between these truncation extremes, making it larger in amplitude than the 1-SE FPCR fit but significantly smaller than the unregularised baseline. However, as the visual comparison proves, Tikhonov's intermediate magnitude does not translate to a smoother curve, underscoring that magnitude alone is an insufficient proxy for interpretability.
+
+```{r}
+#| fig-width: 6
+#| fig-height: 4.5
+#| fig-cap: "Tikhonov smoothly shrinks small eigenvalues toward zero, whereas FPCR applies a hard boundary. The two vertical lines mark the cutoffs chosen by the cross-validated minimum (green) and by the one-standard-error rule (orange); every component to the left of a line is discarded entirely by the corresponding FPCR fit."
+
+plot(fit_tik$mu, fit_tik$shrink, log = "x", type = "b", pch = 20, 
+     col = "blue", xlab = "Eigenvalue (log scale)",
+     ylab = "Shrinkage Factor")
+
+abline(v = fit_tik$mu[K_min], lty = 2, col = "forestgreen", lwd = 2)
+abline(v = fit_tik$mu[K_1se], lty = 2, col = "darkorange", lwd = 2)
+
+legend("bottomright",
+       c("Tikhonov Shrinkage",
+         paste0("FPCR min cutoff (K = ", K_min, ")"),
+         paste0("FPCR 1se cutoff (K = ", K_1se, ")")),
+       col = c("blue", "forestgreen", "darkorange"),
+       lty = c(1, 2, 2), pch = c(20, NA, NA), bty = "n")
+```
+
+The shrinkage curve plots the Tikhonov penalty weight, $\hat\mu_k/(\hat\mu_k + \lambda)$, applied to each component as a function of its eigenvalue. This factor dictates how much of a component's OLS oefficient is retained: large, stable eigenvalues on the right receive a weight near one, while noisy, near-zero eigenvalues on the left are smoothly shrunk toward zero. To get a good sense of comparison between what these two regularisation methods are doing, we can utilise this plot by mapping the FPCR cutoffs onto this space. This gives a reasonable explanation to the divergence in smoothness and predictive power: The one-standard-error rule places its hard boundary to the right, truncating the spectrum just before the shrinkage factor begins its rapid decline. By discarding everything to the left of this line, it acts as a strict filter that retains only the dominant signal to enforce a smooth coefficient function. Conversely, the minimum rule sets its boundary far to the left, deep into the region where the shrinkage factor has already tapered off near zero. Because FPCR retains everything to the right of its cutoff with full reciprocal weights ($1/\hat\mu_k$), the minimum rule allows this noisy tail to completely inflate the estimated function.
+
+Ultimately, the choice between these estimators depends on the analytical priority: spectral truncation seemingly tends to yield a structurally interpretable, smooth parameter, while Tikhonov tolerates a jagged coefficient function to maximize out-of-sample accuracy.
+
+### References
+
+Hall, P. and Horowitz, J. L. (2007). Methodology and convergence rates for functional linear regression. *The Annals of Statistics*, 35(1), 70-91.

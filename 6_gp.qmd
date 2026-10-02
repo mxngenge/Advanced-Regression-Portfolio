@@ -1,0 +1,177 @@
+---
+title: "Gaussian Processes"
+---
+
+```{r}
+#| message: false
+#| warning: false
+
+library(cmdstanr)
+library(knitr)
+```
+
+## Problem 1
+
+Consider the following six observations of a response $y$ at a single real input $x$.
+
+| $x$ | 0.9 | 3.8 | 5.2 | 6.1 | 7.5 | 9.6 |
+|-----|-----|-----|-----|-----|-----|-----|
+| $y$ | 0.1 | 1.2 | 2.1 | 1.1 | 1.5 | 1.2 |
+
+Use a Bayesian approach to fit a Gaussian process model to these data. Simulate from the posterior and illustrate. Carefully explain what the Stan program does. Use equations.
+
+**Ans:**\
+
+```{r}
+#| fig-width: 6
+#| fig-height: 4.5
+#| fig-cap: "The six observations."
+
+x_obs <- c(0.9, 3.8, 5.2, 6.1, 7.5, 9.6)
+y_obs <- c(0.1, 1.2, 2.1, 1.1, 1.5, 1.2)
+
+plot(x_obs, y_obs, pch = 20, xlim = c(0, 10), ylim = c(-1, 3),
+     xlab = "x", ylab = "y")
+```
+
+The model treats the observations as noisy evaluations of an unknown function $f$, which is given a Gaussian process prior with zero mean and a squared exponential covariance function,
+
+$$y_i = f(x_i) + \varepsilon_i, \qquad \varepsilon_i \sim N(0, \sigma^2), \qquad f \sim \mathcal{GP}\big(0, k(x, x')\big), \qquad k(x, x') = \alpha^2 \exp\left(-\frac{(x - x')^2}{2\rho^2}\right).$$
+
+Here $\alpha$ is the marginal standard deviation of the function, $\rho$ is the length scale that controls how quickly the correlation between $f(x)$ and $f(x')$ decays with distance, and $\sigma$ is the standard deviation of the observation error. A Gaussian process is characterised by the fact that any finite collection of function values is multivariate normal, so for the $n = 6$ observed inputs the function values satisfy $\mathbf{f} \sim N(\mathbf{0}, K)$ with $K_{ij} = k(x_i, x_j)$.
+
+In matrix form:
+
+$$\mathbf{y} = \mathbf{f} + \pmb{\varepsilon}$$
+
+Given $\mathbf{f} \sim N(\mathbf{0}, K)$ and independent errors $\pmb{\varepsilon} \sim N(\mathbf{0}, \sigma^2 I_n)$:
+
+$$E[\mathbf{y}] = E[\mathbf{f}] + E[\pmb{\varepsilon}] = \mathbf{0} + \mathbf{0} = \mathbf{0}$$
+
+Since $\mathbf{f}$ and $\pmb{\varepsilon}$ are independent, $\text{Cov}(\mathbf{f}, \pmb{\varepsilon}) = 0$:
+
+$$\text{Var}(\mathbf{y}) = \text{Var}(\mathbf{f}) + \text{Var}(\pmb{\varepsilon}) = K + \sigma^2 I_n$$
+
+Since linear combinations of normal variables remain normal, integrating out $\mathbf{f}$ yields the marginal distribution of the data given the hyperparameters $\theta = (\rho, \alpha, \sigma)$:
+
+$$\therefore \mathbf{y} \mid \theta \sim N(\mathbf{0}, C), \qquad C = K + \sigma^2 I_n.$$
+
+This is the only likelihood that the sampler has to evaluate. The Bayesian part of the problem is then to place priors on $\theta$ and to sample from $p(\theta \mid \mathbf{y}) \propto p(\mathbf{y} \mid \theta)\, p(\theta)$ using Hamiltonian Monte Carlo. The function values at new inputs are obtained afterwards by drawing from their conditional distribution given the data and each sampled value of $\theta$.
+
+The Stan programme is the `gp1.stan` file found on the course amathuba, with no alterations made.
+
+The Stan program executes this model across three primary blocks. The transformed data block standardises the observed response and the $N_2$ new predictive inputs:
+
+$$\tilde{y}_i = \frac{y_i - \bar{y}}{s_y}, \qquad \tilde{x}_i = \frac{x_i - \bar{x}}{s_x}, \qquad \tilde{x}^*_j = \frac{x^*_j - \bar{x}}{s_x}.$$
+
+Standardisation centres the function on the sample mean and places the hyperparameters on a unit scale, allowing the priors $\rho, \alpha, \sigma \sim N^{+}(0, 1)$ to remain sensible regardless of the original data units. The model block constructs the covariance matrix $C$ and evaluates the marginal likelihood. Instead of directly inverting $C$, the program computes its lower-triangular Cholesky factor $C = LL^\top$ for computational speed and numerical stability. The log-density is then evaluated directly using this factor:
+
+$$\log p(\tilde{\mathbf{y}} \mid \theta) = -\frac{1}{2}\, \tilde{\mathbf{y}}^\top (LL^\top)^{-1} \tilde{\mathbf{y}} - \frac{1}{2} \log \vert{}LL^\top\vert{} - \frac{n}{2} \log 2\pi.$$
+
+The generated quantities block runs once per posterior draw of $\theta$ to sample the latent function at the new inputs. Because Gaussian processes are jointly normal, the new function values $\mathbf{f}^*$ and the observed data satisfy:
+
+$$\begin{pmatrix} \tilde{\mathbf{y}} \\ \mathbf{f}^* \end{pmatrix} \sim N\left(\mathbf{0}, \begin{pmatrix} C & K_* \\ K_*^\top & K_{**} \end{pmatrix}\right),$$
+
+where $K_*$ is the $n \times N_2$ cross-covariance matrix and $K_{}$ is the covariance among the new inputs. Conditioning on the observed data yields the predictive distribution:
+
+$$\mathbf{f}^* \mid \tilde{\mathbf{y}}, \theta \sim N(\pmb{\mu}^*, \Sigma^*)$$
+
+$$\pmb{\mu}^* = K_*^\top C^{-1} \tilde{\mathbf{y}}, \qquad \Sigma^* = K_{**} - K_*^\top C^{-1} K_*$$
+
+To compute the covariance without inverting $C$, the program defines $V = L^{-1} K_*$. Substituting $C = LL^\top$ into the predictive variance equation yields:
+
+$$K_*^\top C^{-1} K_* = K_*^\top (LL^\top)^{-1} K_* = K_*^\top L^{-\top} L^{-1} K_* = (L^{-1}K_*)^\top (L^{-1}K_*) = V^\top V$$
+
+$$\implies \Sigma^* = K_{**} - V^\top V.$$
+
+A small constant ($10^{-9}$) is added to the diagonal of $\Sigma^*$ to ensure the matrix remains numerically stable before drawing the new function values. Because one function is drawn for each sampled value of $\theta$, the resulting collection of draws forms a sample from the posterior predictive distribution $p(\mathbf{f}^* \mid \tilde{\mathbf{y}})$, passing forward hyperparameter uncertainty into the function estimates.
+
+A structural property of the provided code requires the response to be standardised before it is passed to Stan as the likelihood in the model block evaluates the supplied y_obs, but the priors and predictions rely on the internally standardised yn. The returned draws are then converted back to the original scale in R via $f^* = s_y \tilde{f}^* + \bar{y}$ and $\sigma_y = s_y \sigma$.
+
+We standardise the response, compile the program, and sample across a grid of 100 inputs ($\in [0, 10]$). With only $n=6$ observations, the posterior distribution of the hyperparameters is highly uncertain. To prevent the sampler from making numerical errors when exploring this tricky space, we increase `adapt_delta` to 0.95, which forces the algorithm to take smaller, more cautious steps.
+
+```{r}
+#| message: false
+#| warning: false
+
+x_grid <- seq(0, 10, length.out = 100)
+
+
+y_mean <- mean(y_obs)
+y_sd   <- sd(y_obs)
+y_std  <- (y_obs - y_mean) / y_sd
+
+data_list <- list(N_obs = length(x_obs),
+                  y_obs = y_std,
+                  x_obs = x_obs,
+                  N2    = length(x_grid),
+                  x2    = x_grid)
+
+gp_model <- cmdstan_model("stan/gp1.stan")
+
+gp_fit <- gp_model$sample(data = data_list,
+                          seed = 123,
+                          chains = 4,
+                          parallel_chains = 2,
+                          adapt_delta = 0.95,
+                          iter_sampling = 2000,
+                          refresh = 0)
+```
+
+```{r}
+#| tbl-cap: "Posterior summaries of the hyperparameters on the standardised scale."
+
+hyper_summary <- gp_fit$summary(c("rho", "alpha", "sigma"))
+hyper_summary <- as.data.frame(hyper_summary[, c("variable","mean","median",
+                                                 "sd", "q5", "q95",
+                                                 "rhat", "ess_bulk")])
+
+hyper_summary$variable <- c("$\\rho$", "$\\alpha$", "$\\sigma$")
+colnames(hyper_summary) <- c("Parameter", "Mean", "Median", "SD", 
+                             "5%", "95%", "$\\hat{R}$", "$ESS_{bulk}$")
+
+kable(hyper_summary, digits = 3, row.names = FALSE, escape = FALSE)
+```
+
+```{r}
+#| tbl-cap: "Posterior summaries of the hyperparameters converted to the original data scale."
+
+
+rho_draws   <- as.numeric(gp_fit$draws("rho", format = "matrix"))
+sigma_draws <- as.numeric(gp_fit$draws("sigma", format = "matrix"))
+
+# back to the original scale of x and y
+rho_original   <- rho_draws * sd(x_obs)
+sigma_original <- sigma_draws * y_sd
+
+n_divergent <- sum(gp_fit$diagnostic_summary(quiet = TRUE)$num_divergent) 
+### gives a val of 6
+
+
+rho_draws   <- as.numeric(gp_fit$draws("rho", format = "matrix"))
+alpha_draws <- as.numeric(gp_fit$draws("alpha", format = "matrix"))
+sigma_draws <- as.numeric(gp_fit$draws("sigma", format = "matrix"))
+
+# Transform back to the original scale of x and y
+rho_orig   <- rho_draws * sd(x_obs)
+alpha_orig <- alpha_draws * y_sd
+sigma_orig <- sigma_draws * y_sd
+
+orig_summary <- data.frame(
+  Parameter = c("$\\rho$ (length scale)", "$\\alpha$ (marginal SD)", 
+                "$\\sigma$ (noise SD)"),
+  Median    = c(median(rho_orig), median(alpha_orig), median(sigma_orig)),
+  Q5        = c(quantile(rho_orig, 0.05), quantile(alpha_orig, 0.05), 
+                quantile(sigma_orig, 0.05)),
+  Q95       = c(quantile(rho_orig, 0.95), quantile(alpha_orig, 0.95), 
+                quantile(sigma_orig, 0.95))
+)
+
+
+kable(orig_summary, digits = 3, 
+      col.names = c("Parameter", "Median", "5%", "95%"), 
+      row.names = FALSE, escape = FALSE)
+
+```
+
+The potential scale reduction factors ($\hat{R}$) are close to 1.00 and the effective sample sizes ($ESS_{bulk}$) are adequate, confirming that the chains converged and mixed well. The sampler recorded 6 divergent transitions across all chains, which is a minor consequence of navigating a highly uncertain parameter space with limited data. We also note that the posteriors of the three hyperparameters are predictably wide given the $n=6$ sample size.

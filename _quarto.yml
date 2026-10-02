@@ -1,0 +1,42 @@
+project:
+  type: book
+
+book:
+  chapters:
+    - index.qmd
+    - part: "Section A"
+      chapters:
+        - 1_splines.qmd
+        - 2_mdsplines.qmd
+        - 3_gams.qmd
+        - 4_mars.qmd
+        - 5_wavelets.qmd
+        - 6_gp.qmd
+        - x1_jump_wavelet_analysis.qmd
+        - x2_mds.qmd
+    - part: "Section B"
+      chapters:
+        - 7_tut1.qmd
+        - 8_tut2.qmd
+        - x3_local_likelihood.qmd
+        - x4_functional_regression.qmd
+    - part: "Supporting Documentation"
+      chapters: 
+        - fin_declaration_reflection_journal.qmd
+
+format:
+  pdf:
+    documentclass: book
+    classoption: [12pt, oneside]
+    geometry: margin=1in
+    toc: true
+    toc-depth: 3
+    number-sections: true
+    
+
+    include-in-header: setup.tex
+
+    colorlinks: true
+    linkcolor: black
+    citecolor: red
+    urlcolor: black

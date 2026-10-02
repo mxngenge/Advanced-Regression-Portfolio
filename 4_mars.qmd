@@ -1,0 +1,193 @@
+---
+title: "Multivariate Adaptive Regression Splines (MARS)"
+---
+
+```{r}
+#| message: false
+#| warning: false
+
+library(earth)
+library(mgcv)
+library(latex2exp)
+library(knitr)
+```
+
+The Spambase dataset contains binary indicators of whether an email is considered unsolicited commercial spam, alongside continuous predictors measuring the frequencies of specific words and characters, as well as the lengths of consecutive capital letter sequences.
+
+```{r}
+#| tbl-cap: "Distribution of the binary response (V58)"
+
+spam_data <- read.csv("data/MARS/spambase.data", header = FALSE)
+
+# Response distribution
+kable(table("Spam Indicator" = spam_data$V58))
+
+
+```
+
+```{r}
+#|tbl-cap: "summary statistics for a selection of predictors."
+
+
+
+sel_vars <- c(1:5, 55:57)
+stats <- data.frame(
+  Prop_Zero = colMeans(spam_data[, sel_vars] == 0),
+  Mean      = colMeans(spam_data[, sel_vars]),
+  Max       = apply(spam_data[, sel_vars], 2, max)
+)
+rownames(stats) <- paste0("V", sel_vars)
+kable(stats, digits = 3, col.names = c("Proportion of Zeros", "Mean", 
+                                       "Maximum"))
+
+```
+
+Most predictors in this dataset count the frequencies of specific words or characters. Because the majority of these tracked terms do not appear in a typical email, these features exhibit extremely high proportions of exact zero values, as demonstrated by the first five predictors in the table, alongside a long right tail. Fortunately, the binary response variable maintains a healthy balance between non-spam (2788) and spam (1813) classifications, avoiding the predictive complications associated with severe class imbalance. After partitioning the data into a 70/30 train/testing split, an initial MARS model is fitted using a degree of one to establish a simple additive baseline without interaction terms. This configuration automatically applies a penalty of two per knot, which the package documentation suggests is the optimal default setting to avoid subverting the standard selection algorithm.
+
+```{r}
+spam_data <- read.csv("data/MARS/spambase.data", header = FALSE)
+
+set.seed(1409)
+idx   <- sample(nrow(spam_data), size = round(0.7 * nrow(spam_data)))
+train <- spam_data[idx, ]
+test  <- spam_data[-idx, ]
+
+fit <- earth(V58 ~ ., data = train, degree = 1, penalty = 2)
+```
+
+#### Evaluating term selection and penalisation criteria
+
+The model constructs its functional basis through a two-stage algorithm: a greedy forward pass that sequentially adds terms to maximally reduce the residual sum of squares, followed by a backward pass that prunes terms based on the generalised cross-validation score. The generalised cross-validation heavily penalises the residual sum of squares using the effective number of parameters, which is directly scaled by the specified per-knot penalty.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 4
+#| fig-cap: >
+#|   The term selection process. The residual sum of squares decreases monotonically 
+#|   during the forward pass, while the generalised cross-validation curve reaches a minimum 
+#|   to identify the optimal model size during the backward pruning pass.
+
+par(mfrow = c(1, 2))
+plot(fit$rss.per.subset, type = "l", lwd = 2,
+     xlab = "Number of terms", ylab = "RSS",
+     main = "RSS of best model of each size")
+plot(fit$gcv.per.subset, type = "l", lwd = 2,
+     xlab = "Number of terms", ylab = "GCV",
+     main = "GCV of best model of each size")
+abline(v = which.min(fit$gcv.per.subset), lty = 2, col = "cyan")
+par(mfrow = c(1, 1))
+```
+
+Plotting these criteria against the number of terms illustrates this regularisation dynamic. The residual sum of squares decreases monotonically as terms are added during the unconstrained forward pass. Conversely, the generalised cross-validation curve eventually penalises the increasing complexity and turns upward, creating a distinct minimum that dictates the optimal final model size selected by the backward pass.
+
+#### The mechanical impact of structural arguments
+
+The algorithm builds the model through a two-stage process, and the structural arguments govern the constraints placed on each phase. The initial forward pass is dictated by parameters that control the expansion of the functional basis. The degree argument restricts the maximum order of interactions, with a degree of one enforcing a strictly additive model, while higher values allow for complex tensor products of hinge functions. To prevent uncontrolled expansion, the forward pass is bounded by the `nk`argument, which sets a hard upper limit on the total number of terms generated before pruning begins. Furthermore, the `thresh` parameter ensures computational efficiency by prematurely terminating the forward pass if the marginal improvement to the coefficient of determination falls below a specified tolerance, meaning the algorithm will naturally stop adding terms even if the maximum term limit has not been reached.
+
+Once the forward pass concludes, the backward pass systematically prunes the model to optimise the bias-variance tradeoff. This phase is heavily influenced by the `penalty` parameter, which determines the cost per knot incorporated into the generalised cross-validation score. A higher penalty forces the algorithm to penalise complexity more aggressively, inherently favouring a more parsimonious final model without fundamentally altering the initial sequence of terms generated by the forward pass. The overall pruning strategy is dictated by the `pmethod` argument, which defaults to standard backward elimination but can be switched to k-fold cross-validation or disabled entirely. Finally, the `nprune` argument provides a direct mechanism to enforce a strict upper bound on the number of terms retained in the final model, overriding the algorithmic optimum if a smaller structural footprint is explicitly required.
+
+#### Extending the framework to logistic classification
+
+Because the response variable represents a binary outcome, a formal logistic framework is more appropriate than treating the problem as a linear probability model. The algorithm adapts to classification tasks by first fitting a standard Gaussian model to execute the term selection and pruning phases. It subsequently refits the retained basis functions using a binomial likelihood.
+
+```{r}
+#| warning: false
+fit_l1 <- earth(V58 ~ ., data = train, degree = 1, 
+                glm = list(family = binomial))
+fit_l2 <- earth(V58 ~ ., data = train, degree = 2, 
+                glm = list(family = binomial))
+
+auc <- function(p, y) {
+  r <- rank(p); n1 <- sum(y == 1); n0 <- sum(y == 0)
+  (sum(r[y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
+}
+clip <- function(p) pmin(pmax(p, 1e-12), 1 - 1e-12)
+metrics <- function(p, y, label) {
+  data.frame(model = label,
+             acc     = round(mean((p > 0.5) == y), 4),
+             auc     = round(auc(p, y), 4),
+  logloss = round(-mean(y * log(clip(p)) + (1 - y) * log(1 - clip(p))), 4))
+}
+```
+
+#### Benchmarking predictive performance against a GAM
+
+Benchmarking the regression spline framework against a generalised additive model illustrates the contrasting mechanisms each methodology employs to handle zero-inflated, right-skewed data. Because standard continuous spline bases allocate their flexibility evenly across the entire data domain, providing raw, heavily skewed inputs inadvertently forces the spline to concentrate its evaluation capacity around the massive pile of zeros. To counteract this vulnerability, a logarithmic transformation is universally applied to the predictors prior to fitting the generalised additive model. Furthermore, an extra shrinkage penalty is activated on the null space of the basis, allowing smooth terms to be completely shrunk out of the model if they do not sufficiently contribute to the final fit. In contrast, the hinge functions inherent to the competing methodology naturally place their interior knots exactly at observed data points, allowing them to inherently process the raw skewed data directly without requiring external transformation.
+
+R
+
+```{r}
+#| warning: false
+#| tbl-cap: "Comparative predictive accuracy across generalised additive models and MARS variants on the held-out test set."
+
+lg <- function(d) { d[paste0("V", 1:57)] <- log1p(d[paste0("V", 1:57)]); d }
+train_g <- lg(train)
+test_g  <- lg(test)
+
+nuniq <- sapply(train[paste0("V", 1:57)], function(v) length(unique(v)))
+terms <- ifelse(nuniq >= 10, 
+                sprintf("s(V%d, k = 5)", 1:57), 
+                sprintf("V%d", 1:57))
+form  <- as.formula(paste("V58 ~", paste(terms, collapse = " + ")))
+
+gam_raw_path <- "data/MARS/fit_gam_raw.rds"      
+if (file.exists(gam_raw_path)) {
+  fit_gam_raw <- readRDS(gam_raw_path)
+} else {
+  fit_gam_raw <- gam(form, data = train, family = binomial,
+                     method = "REML",  select = TRUE)
+  saveRDS(fit_gam_raw, gam_raw_path)
+}
+
+gam_log_path <- "data/MARS/fit_gam_log.rds"      
+if (file.exists(gam_log_path)) {
+  fit_gam_log <- readRDS(gam_log_path)
+} else {
+  fit_gam_log <- gam(form, data = train_g, family = binomial,
+                     method = "REML", select = TRUE)
+  saveRDS(fit_gam_log, gam_log_path)
+}
+
+p_gam_raw <- drop(predict(fit_gam_raw, newdata = test, type = "response"))
+p_gam_log <- drop(predict(fit_gam_log, newdata = test_g, type = "response"))
+p_m1      <- drop(predict(fit_l1, newdata = test, type = "response"))
+p_m2      <- drop(predict(fit_l2, newdata = test, type = "response"))
+
+tab_bench <- rbind(
+  metrics(p_gam_raw, test$V58, "GAM (raw inputs, select)"),
+  metrics(p_gam_log, test$V58, "GAM (log1p, select)"),
+  metrics(p_m1,      test$V58, "MARS degree 1 + logit"),
+  metrics(p_m2,      test$V58, "MARS degree 2 + logit")
+)
+rownames(tab_bench) <- NULL
+kable(tab_bench, digits = 4)
+```
+
+Evaluating the benchmark metrics highlights the performance trade-offs between the two non-linear modelling structures. The generalised additive model fitted on the logarithmically transformed data is the unequivocal best performer across all criteria, achieving the highest overall accuracy and area under the curve, alongside the lowest log-loss. It heavily benefits from its fully penalised smooth terms and the rigorous logarithmic preprocessing required to manage distributions with a high concentration of zero values.
+
+Stripping away this preprocessing exposes the structural vulnerability of continuous splines on raw, skewed data. While the raw-input GAM marginally outperforms the strictly additive MARS configuration (degree 1) in pure classification accuracy and AUC, it suffers the highest log-loss of all evaluated models, indicating severe instability and miscalibration in its predicted probabilities. Furthermore, allowing the MARS framework to capture pairwise interactions (degree 2) enables it to bridge the performance gap and comfortably surpass the raw-input GAM across the board. Ultimately, the core theoretical trade-off centres on workflow efficiency: the multivariate adaptive regression splines approach achieves highly competitive classification natively, bypassing the manual transformations the generalised additive model strictly requires to function on heavily skewed inputs. While not a definitive rule of thumb, this highlights that model selection remains highly dependent on the specific nature of the data and the analytical goals of the project.
+
+#### Visualising non-linear smooth components
+
+Extracting the most significant smooth components from the GAM w.r.t. the log-transformed data provides visual confirmation of data structures structurally captured even on the transformed scale , let alone the raw scale.
+
+```{r}
+#| fig-width: 11
+#| fig-height: 7
+#| fig-cap: >
+#|   The six most statistically significant smooth functions estimated by the penalised generalised 
+#|   additive model, illustrating the non-linear relationships identified on the transformed inputs.
+
+st  <- summary(fit_gam_log)$s.table
+top <- order(st[, "p-value"])[1:6]
+
+par(mfrow = c(2, 3))
+for (i in top) {
+  plot(fit_gam_log, select = i, scale = 0, scheme = 1, col = "blue", las = 1,
+       ylab = TeX(paste0("$f(V", as.numeric(gsub("[^0-9]", "", 
+                                                 rownames(st)[i])), ")$")))
+}
+par(mfrow = c(1, 1))
+```
+
+Observing the rug plots along the horizontal axes reveals that the underlying data distribution remains heavily concentrated within the lower third of the range. As the predictor values increase, the data becomes increasingly sparse towards the right tail of the domain. This lack of empirical support causes the confidence interval bands to balloon rapidly in these upper regions. Although the exact point of divergence and the magnitude of the widening vary among the individual predictors, this escalating structural uncertainty is a noticeable and consistent characteristic across all the visualised smooth components.

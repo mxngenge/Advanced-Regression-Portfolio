@@ -1,0 +1,243 @@
+---
+title: "Generalised Additive Models (GAMs)"
+---
+
+```{r}
+#| message: false
+#| warning: false
+
+library(latex2exp)
+library(mgcv)
+library(splines)
+library(gamair)
+library(knitr)
+```
+
+The first two questions in this section share the same small simulated data set that we saw in the previous chapter for demonstrations.
+
+```{r}
+set.seed(1409)
+n   <- 100
+x   <- runif(n)
+mu  <- 5 + sin(3*pi*(x - 0.6))
+y   <- rnorm(n, mu, 0.5)
+dat <- data.frame(x = x, y = y)
+xg  <- seq(0, 1, length.out = 200)  #for plots
+
+
+```
+
+### Question 2: Exploring `gam()` in `mgcv`
+
+```{r}
+#| fig-width: 6
+#| fig-height: 4
+#| fig-cap: 'Estimated thin plate spline centered around zero, overlaid with partial residuals and a data rug plot.'
+
+fit <- gam(y ~ s(x), data = dat)
+plot(fit, residuals = TRUE, pch = 20, scheme = 1, 
+     xlab = TeX("$x$"), ylab = TeX("$f(x)$"))
+
+
+```
+
+Above is a simple example of how these estimated smooth functions look. Noticeably, the curve is centered at zero due to an identifiability constraint. If the smooth function was free to shift vertically, we could add a constant to it and subtract that exact same constant from the global intercept without changing the final predictions at all. Thus, this constraint cleanly separates the shape of the curve from the model's overall baseline. With this in mind, the plot above displays only this isolated smooth component alongside its shaded confidence bands, dropping the intercept entirely.
+
+Because the curve is shifted down by removing the intercept, partial residuals are overlayed rather than raw data points. This allows us to visually verify if our centred smooth curve properly tracks the local scatter of the data. We also notice the tick marks along the horizontal axis forming a rug plot to indicate the distribution of the observed data, helping identify regions where the estimated curve relies heavily on the penalty due to a lack of local observations.
+
+#### `s(.)` terms in a model
+
+```{r}
+sm <- fit$smooth[[1]] # extract s(x), the only smooth term in this model
+class(sm)            
+sm$bs.dim     # k; basis dims before the identifiability constraint, 
+# which makes it k-1 
+sm$null.space.dim    # dim of the unpenalised part
+sm$rank              # of the penalty matrix
+ncol(predict(fit, type = "lpmatrix"))   # intercept + smooth coefficients
+```
+
+By default, the smooth term is a thin plate regression spline with an initial basis dimension of $k = 10$. Because a sum-to-zero identifiability constraint is applied, the actual number of parameters evaluated for this term drops to $k - 1 = 9$. Consequently, the design matrix for the entire model contains 10 columns in total: one for the parametric intercept, and nine for the constrained smooth.The null space dimension indicates the number of basis components that are entirely unpenalised. The penalty applied during optimisation takes the quadratic form $\lambda \beta'S\beta$. If a specific combination of coefficients $\beta$ lies in the null space of the penalty matrix $S$, then $S\beta = \mathbf{0}$, meaning the penalty evaluates to exactly zero regardless of how large the smoothing parameter $\lambda$ becomes. For the standard wiggliness penalty, $\int f''(x)^2\,dx$, , we can observe this by setting the penalty to zero: $$ \int f''(x)^2 , dx = 0 \implies f''(x) = 0 $$ $$ \therefore f'(x) = c $$ $$ f(x) = cx + d $$ Because the identifiability constraint already removes the constant shift $d$, only the linear component $cx$ remains. Hence, the null space is of dimension 1 in this case. The function explicitly notes this dimension because it represents the limiting shape of the curve under maximum shrinkage: $\lambda \to \infty$ will give an infinitely large penalty to *any* curve with a non-zero second derivative. Finally, since the constrained basis has 9 dimensions and 1 lies in the null space, the penalty matrix itself has a rank of 8.
+
+#### Penalty matrices with `fit = FALSE`
+
+```{r}
+
+G <- gam(y ~ s(x), data = dat, fit = FALSE)
+
+dim(G$X)                        
+S1 <- G$smooth[[1]]$S[[1]]  # penalty matrix for s(x)
+dim(S1)
+round(eigen(S1, symmetric = TRUE)$values, 5)
+
+fit_from_G <- gam(G = G)
+all.equal(coef(fit), coef(fit_from_G))
+```
+
+Setting the fit argument to FALSE stops the routine before estimation and returns the complete design matrix and penalties that would be used. Examining the eigenvalues of the penalty matrix reveals one zero eigenvalue. This indicates that the linear part of the smooth lies in the null space of the penalty and remains completely unpenalised, consistent with the mathematical property that straight lines have a zero second derivative. The remaining non-linear components of the smooth are shrunk by the penalty. The returned object can be passed directly back into the function to complete the estimation, allowing model setup to be separated from execution.
+
+#### Outer iteration optimization and smoothing parameters
+
+```{r}
+fit$method      
+fit$optimizer   
+fit$sp  # estimated smoothing parameter
+```
+
+The software formulates the entire model as a single penalised regression rather than utilising backfitting. For a Gaussian response, this is penalised least squares, while for other families it employs penalised iteratively re-weighted least squares, solving a weighted penalised regression on pseudo-data at each step. The smoothing parameters, denoted as sp, multiply the respective penalty matrices and are chosen via a separate outer optimisation loop. By default, this outer iteration minimises the generalised cross-validation score for an unknown scale or Mallows' Cp for a known scale, with the penalised fitting nested inside.
+
+#### Effective degrees of freedom represent parameter usage
+
+The effective degrees of freedom measure how many parameters a smooth term is actively utilising in the model. This is calculated as the sum of the diagonal elements of the hat matrix that belong to the coefficients of that specific smooth. Each coefficient contributes between zero for complete shrinkage and one for a fully unpenalised parameter. As the smoothing parameter approaches zero, the effective degrees of freedom approach the full basis dimension minus one, whereas as the smoothing parameter grows large, the value collapses toward the dimension of the null space. An effective degrees of freedom value near one indicates that the estimated function is essentially a straight line.
+
+#### Controlling penalty application across terms
+
+There are several ways to alter the default shrinkage behaviour.
+
+(i) `s(x, k = 10, fx = TRUE)` fixes the smooth as an unpenalised regression spline (edf $= k - 1$).
+
+(ii) Entering the variable as an ordinary parametric term: `y ~ x`.
+
+(iii) `sp = 0` forces the smoothing parameter to be zero for that term.
+
+(iv) `select = TRUE` adds a penalty on the null space so terms can be shrunk out completely.
+
+### Question 4: Simulate splines
+
+#### Simulating the prior distribution of splines
+
+Choose a random set of beta coefficients from $N(0, \sigma^2)$, and plot the resulting splines (10 to 20). One could see this as the 'prior' distribution of splines (in a Bayesian context).
+
+**Ans:**\
+
+```{r}
+#| fig-width: 12
+#| fig-height: 4
+#| fig-cap: "Simulating 15 random curves from an independent Gaussian prior on the B-spline coefficients. The first two panels show unpenalised draws with different variances, while the third panel shows the standardised theoretical standard deviation across the domain, highlighting the non-stationarity of the B-spline basis at the boundaries."
+
+k  <- 10
+Bg <- bs(xg, df = k, intercept = TRUE)[, 1:k]
+
+par(mfrow = c(1, 3))
+for (sigma in c(0.5, 1)) {
+  betas <- matrix(rnorm(k * 15, 0, sigma), k, 15)
+  matplot(xg, Bg %*% betas, type = "l", lty = 1, 
+          col = adjustcolor("blue", 0.5),
+          xlab = "x", ylab = TeX("$f(x)$"), ylim = c(-3, 3), 
+          main = TeX(paste("$\\sigma =$ ", sigma)))
+}
+plot(xg, sqrt(rowSums(Bg^2)), type = "l", lwd = 2, xlab = "x",
+     ylab = TeX("$\\sigma_{f(x)} / \\sigma$"), 
+     main = TeX("SD of $f(x)$ for iid $\\beta$"))
+par(mfrow = c(1, 1))
+```
+
+Rather than estimating coefficients from data, the inherent behaviour of the basis can be explored by simulating functions from a prior distribution. Drawing independent coefficients from a zero-mean Gaussian distribution and multiplying them by the basis matrix generates random functions from the unpenalised spline. The curves appear smooth because the underlying B-spline basis functions are piecewise cubic polynomials with continuous derivatives, but because the coefficients are independent, the functions remain as wiggly as the basis dimension permits. The theoretical variance of these curves evaluates to $\text{Var}(f(x)) = \sigma^2 \sum B_j(x)^2$. Dividing this by $\sigma$ standardises the metric, allowing the structural uncertainty of the basis to be plotted independent of the chosen variance. Because B-splines always sum to one at any point across the active interval, the standard deviation balloons rapidly to one at the endpoints where only a single basis function is active. In the interior, multiple basis functions overlap to sum to one, meaning the sum of their squares is strictly less than one, creating a dip in variance. Consequently, this independent prior is not stationary, which is entirely an artefact of the basis construction. A penalised model corrects this by replacing the independent prior with a structured multivariate normal prior that enforces smoothness
+
+#### Simulating draws using the fitted covariance matrix
+
+Obtain the covariance matrix for the fitted spline (mgcv) coefficients, and simulate 10 to 20 splines.
+
+**Ans:**\
+Building directly on the previous demonstration, the penalised fit resolves the jaggedness of the independent prior by imposing a structured smoothing prior, $\beta \sim N(0, (\lambda S)^{-1}\sigma^2)$. Because the penalty matrix $S$ is singular, this prior is improper, effectively assigning a flat unpenalised prior to the null space. As highlighted in the course notes, adopting this Bayesian perspective is mathematically necessary for reliable inference. The penalty naturally induces bias in the penalised terms such that $E(\hat{\beta}) \neq \beta$, meaning that confidence intervals based on the standard frequentist variance, $V_\beta = (X'X + \lambda S)^{-1}X'X(X'X + \lambda S)^{-1}\sigma^2$, exhibit poor coverage. The solution is to construct Bayesian confidence intervals. As per the notes, combining the structured prior with the data likelihood yields the Bayesian posterior distribution for the coefficients: $\beta \mid y \sim N\!\left(\hat\beta,\ (X'WX + \sum_j\lambda_jS_j)^{-1}\sigma^2\right)$. The variance-covariance function extracts this posterior covariance matrix directly from the fitted model.
+
+```{r}
+#| fig-cap: "Posterior draws from the fitted GAM overlaid on the analytical 95% confidence interval."
+#| fig-width: 7
+#| fig-height: 5
+
+fit4 <- gam(y ~ s(x), data = dat, method = "REML")
+Xp   <- predict(fit4, newdata = data.frame(x = xg), type = "lpmatrix")
+Vb   <- vcov(fit4)                                     
+
+# Generate 15 posterior draws
+post15 <- Xp %*% t(rmvn(15, coef(fit4), Vb))           
+
+# Calculate analytical standard errors for the shaded band
+pr  <- predict(fit4, newdata = data.frame(x = xg), se.fit = TRUE)
+upr <- pr$fit + qnorm(0.975) * pr$se.fit
+lwr <- pr$fit - qnorm(0.975) * pr$se.fit
+
+plot(dat, pch = 20, col = "grey50", xlab = "x", ylab = "y")
+# Add the shaded analytical confidence band
+polygon(c(xg, rev(xg)), 
+        c(upr, rev(lwr)),
+        col = adjustcolor("blue", 0.2),
+        border = NA)
+
+matlines(xg, post15, lty = 1, 
+         col = adjustcolor("blue", 0.35))
+
+lines(xg, drop(Xp %*% coef(fit4)), col = "red", lwd = 3)
+lines(xg, 5 + sin(3*pi*(xg - 0.6)), lty = 2, lwd = 2)
+
+legend("topleft", 
+       legend = c("posterior draws", "fitted", "95% CI", "true mean"), 
+       lty = c(1, 1, NA, 2), pch = c(NA, NA, 15, NA),
+       col = c("blue", "red", adjustcolor("blue", 0.2), "black"), 
+       lwd = c(1, 3, NA, 2), bty = "n")
+```
+
+These are draws of the curve representing uncertainty about $f$, rather than new observations which would need $\sigma^2$ added on top. One caveat to this approach is that the standard posterior covariance matrix conditions on the estimated smoothing parameters $\hat\lambda$ as if they were fixed and known constants. Consequently, the uncertainty involved in estimating $\hat\lambda$ itself is ignored, though invoking the variance-covariance function with the unconditional argument set to true computes an adjusted version that incorporates this extra variability.
+
+
+
+### Question 7: Cairo Temperatures
+
+Fit an appropriate GAM to the cairo data set (in gamair). The data set contains daily temperature over nearly a decade. Your model should include a long-term trend and seasonal changes. You don’t have to worry about autocorrelation here. Illustrate with confidence intervals.
+
+
+**Ans:**\
+
+The cairo dataset from the gamair package contains average daily temperatures in Fahrenheit recorded over roughly a decade, starting from January 1995. With 3780 consecutive observations, the dataset is substantially larger than the simulated examples explored previously. The primary response variable is the daily average temperature, while the predictors of interest are the continuous time elapsed in days and the recurring day of the year.
+
+```{r}
+#| fig-cap: >
+#|   Average daily temperatures in Cairo from January 1995 onwards.
+
+data(cairo)
+
+plot(cairo$time, cairo$temp, type = "l", col = adjustcolor("blue", 0.8),
+     xlab = "Days elapsed (Time)", ylab = "Average Temperature (F)")
+
+```
+
+
+Visual inspection reveals a regular periodic oscillation. It does appear to be an annual cycle, eyeballing that 3 years $\approx$ 1200 days, in which 3 full cycles occur. Intuitively one would expect peaks during the summer months and drops sharply into the winter troughs. There is no immediate visual evidence from the raw plot to suggest any long-term drift in the baseline temperature, nor any obvious long-term change in the magnitude of the cyclical peaks and troughs across the decade. This stability suggests that while the seasonal variation is exceptionally strong, any overarching long-term climate trend will likely be subtle or entirely non-existent.
+
+
+To capture the full climate profile, the model incorporates two distinct smooth terms. A standard thin plate regression spline is applied to the continuous time variable to capture any overarching long-term climate trend. Simultaneously, a cyclic cubic regression spline is applied to the day of the year to properly model the recurring seasonal variation.
+
+
+
+
+Examining the plotted smooth components below confirms the initial visual intuition. The rug plot along the horizontal axis merges into a solid line, indicating a highly dense and consistent data distribution, which we already know since the data is daily. Consequently, the shaded Bayesian confidence intervals are exceptionally narrow for both terms. The long-term trend across elapsed time evaluates to a nearly flat line hovering around zero, exhibiting only minor perturbations. This confirms no substantial overall climate effect or temperature shift occurred across this specific decade. In contrast, the seasonal term displays a very clear, concave-down relationship peaking predictably around day 210: 29 July, middle of summer in the Northen hemisphere. Also as expected we see the coldest days are in the last month of the year heading into the beginnning months of the following year, i.e. winter.
+
+
+
+
+```{r}
+#| fig-width: 6
+#| fig-height: 8
+#| fig-cap: >
+#|   Estimated long-term trend and cyclic seasonal effect for Cairo daily temperatures, 
+#|   illustrated with 95% shaded Bayesian confidence intervals.
+
+
+fit_cairo <- gam(temp ~ s(time) + s(day.of.year, bs = "cc", k = 12), 
+                 data = cairo, method = "REML")
+
+
+par(mfrow = c(2, 1), mar = c(4, 4, 1, 1))
+
+plot(fit_cairo, select = 1, scheme = 1, col = "blue",
+     xlab = "Days elapsed (Time)", ylab = TeX("$f(Time)$"))
+plot(fit_cairo, select = 2, scheme = 1, col = "red",
+     xlab = "Day of the Year", ylab = TeX("$f(Day)$"))
+
+# Reset parameters back to default
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1)
+```
+
+
+

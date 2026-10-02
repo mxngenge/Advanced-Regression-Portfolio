@@ -1,0 +1,431 @@
+---
+title: "Tutorial 1"
+---
+
+## Question 1
+
+Consider the linear model $y = X\beta + \varepsilon$ where $y$ is an $N$-dimensional vector, $X$ is an $N \times (p+1)$ design matrix, and $\varepsilon$ is an $N$-dimensional random vector with mean $0$ and covariance matrix $\sigma^2 I$.
+
+### (a)
+
+Show that minimising the residual sum of squares is equivalent to finding the residual vector $\hat{\varepsilon}$ such that $\hat{\varepsilon} \perp C(X)$.
+
+Forward direction:
+
+$$RSS(\beta) = (y - X\beta)'(y - X\beta)$$
+
+$$\frac{\partial RSS}{\partial \beta} = -2X'(y - X\beta) = 0$$
+
+At the minimiser $\hat\beta$:
+
+$$X'(y - X\hat\beta) = 0$$
+
+Let $\hat\varepsilon = y - X\hat\beta$:
+
+$$\implies X'\hat\varepsilon = 0$$
+
+$$\therefore \hat\varepsilon \perp C(X)$$
+
+Converse direction:
+
+For any candidate parameter $\beta$:
+
+$$y - X\beta = (y - X\hat\beta) + X(\hat\beta - \beta) = \hat\varepsilon + X(\hat\beta - \beta)$$
+
+$$RSS(\beta) = \Vert{}y - X\beta\Vert{}^2$$
+
+$$= \Vert{}\hat\varepsilon + X(\hat\beta-\beta)\Vert{}^2$$
+
+$$= \Vert{}\hat\varepsilon\Vert{}^2 + 2\hat\varepsilon'X(\hat\beta-\beta) + \Vert{}X(\hat\beta-\beta)\Vert{}^2$$
+
+If $\hat\varepsilon \perp C(X) \implies \hat\varepsilon'X = 0$:
+
+$$= \Vert{}\hat\varepsilon\Vert{}^2 + 0 + \Vert{}X(\hat\beta-\beta)\Vert{}^2$$
+
+$$= \Vert{}\hat\varepsilon\Vert{}^2 + \Vert{}X(\hat\beta-\beta)\Vert{}^2$$
+
+Since $\Vert{}X(\hat\beta-\beta)\Vert{}^2 \ge 0$:
+
+$$RSS(\beta) \ge \Vert{}\hat\varepsilon\Vert{}^2$$
+
+Equality holds iff $\beta = \hat\beta$.
+
+$$\therefore \text{Minimising } RSS \iff \hat\varepsilon \perp C(X)$$
+
+### (b)
+
+Show that $\dfrac{(N-p-1)\hat\sigma^2}{\sigma^2} \sim \chi^2_{N-p-1}$ where $\hat\sigma^2 = \dfrac{\sum_{i=1}^N (y_i - \hat y_i)^2}{N-p-1}$.
+
+Let $H = X(X'X)^{-1}X'$, the projection matrix onto $C(X)$. The fitted residual vector is:
+
+$$\hat\varepsilon = y - X\hat\beta = (I-H)y = (I-H)(X\beta + \varepsilon) = (I-H)\varepsilon$$
+
+since $(I-H)X = 0$. The residual sum of squares expands as follows:
+
+$$\hat\varepsilon'\hat\varepsilon = ((I-H)\varepsilon)'((I-H)\varepsilon)$$
+
+$$\hat\varepsilon'\hat\varepsilon = \varepsilon'(I-H)'(I-H)\varepsilon$$
+
+Since $H$ is symmetric ($H' = H$), $(I-H)' = I-H$:
+
+$$\hat\varepsilon'\hat\varepsilon = \varepsilon'(I-H)(I-H)\varepsilon$$
+
+Since $H$ is idempotent ($H^2 = H$), $(I-H)(I-H) = I-H$:
+
+$$\hat\varepsilon'\hat\varepsilon = \varepsilon'(I-H)\varepsilon$$
+
+For the symmetric idempotent matrix $I-H$, its rank $r$ equals its trace. Using the cyclic property of the trace ($\text{tr}(ABC) = \text{tr}(CAB)$):
+
+$$r = \text{rank}(I-H)$$
+
+$$r = \text{tr}(I_N - H)$$
+
+$$r = \text{tr}(I_N) - \text{tr}(X(X'X)^{-1}X')$$
+
+$$r = N - \text{tr}(X'X(X'X)^{-1})$$
+
+$$r = N - \text{tr}(I_{p+1})$$
+
+$$r = N - (p+1) = N - p - 1$$
+
+Given $\varepsilon \sim N(0,\sigma^2 I)$, if $z \sim N(0,I)$ and $M$ is symmetric idempotent of rank $r$, then $z'Mz \sim \chi^2_r$. Applying this with $z = \varepsilon/\sigma$ and $M = I-H$:
+
+$$\frac{\varepsilon'(I-H)\varepsilon}{\sigma^2} = \frac{\hat\varepsilon'\hat\varepsilon}{\sigma^2} \sim \chi^2_{N-p-1}$$
+
+Since $\hat\varepsilon'\hat\varepsilon = \sum_{i=1}^N (y_i-\hat y_i)^2 = (N-p-1)\hat\sigma^2$, this gives $\dfrac{(N-p-1)\hat\sigma^2}{\sigma^2} \sim \chi^2_{N-p-1}$.
+
+### (c)
+
+Show by derivation how the mean squared error of the least squares estimator $\hat\beta$ can be decomposed into its two components, and comment on the relevance of this decomposition for model selection.
+
+By definition, $MSE(\hat\beta) = E\big[(\hat\beta-\beta)(\hat\beta-\beta)'\big]$.
+
+Adding and subtracting $E[\hat\beta]$:
+
+$$\hat\beta - \beta = (\hat\beta - E[\hat\beta]) + (E[\hat\beta] - \beta)$$
+
+Expanding the quadratic form yields four terms:
+
+$$(\hat\beta-\beta)(\hat\beta-\beta)' = (\hat\beta - E[\hat\beta])(\hat\beta - E[\hat\beta])' + (E[\hat\beta] - \beta)(E[\hat\beta] - \beta)'$$
+
+$$+ (\hat\beta - E[\hat\beta])(E[\hat\beta] - \beta)' + (E[\hat\beta] - \beta)(\hat\beta - E[\hat\beta])'$$
+
+Apply the expectation operator. Since $E[\hat\beta] - \beta$ is a non-random constant vector and $E[\hat\beta - E[\hat\beta]] = 0$, the cross-terms vanish:
+
+$$E\big[(\hat\beta - E[\hat\beta])(E[\hat\beta] - \beta)'\big] = E[\hat\beta - E[\hat\beta]](E[\hat\beta] - \beta)' = 0$$
+
+$$E\big[(E[\hat\beta] - \beta)(\hat\beta - E[\hat\beta])'\big] = (E[\hat\beta] - \beta)E[\hat\beta - E[\hat\beta]]' = 0$$
+
+The expectations of the remaining two terms are the definitions of variance and squared bias:
+
+$$E\big[(\hat\beta - E[\hat\beta])(\hat\beta - E[\hat\beta])'\big] = \text{Var}(\hat\beta)$$
+
+$$E\big[(E[\hat\beta] - \beta)(E[\hat\beta] - \beta)'\big] = \text{Bias}(\hat\beta)\text{Bias}(\hat\beta)'$$
+
+Substituting these back yields the matrix decomposition:
+
+$$MSE(\hat\beta) = \text{Var}(\hat\beta) + \text{Bias}(\hat\beta)\text{Bias}(\hat\beta)'$$
+
+To convert this to the scalar expected squared Euclidean distance, trace both sides using $\text{tr}(uv') = v'u = \Vert{}u\Vert{}^2$:
+
+$$E\Vert{}\hat\beta-\beta\Vert{}^2 = \text{tr}\big(MSE(\hat\beta)\big)$$
+
+$$= \text{tr}\big(\text{Var}(\hat\beta)\big) + \text{tr}\big(\text{Bias}(\hat\beta)\text{Bias}(\hat\beta)'\big)$$
+
+$$\therefore E\Vert{}\hat\beta-\beta\Vert{}^2 = \text{tr}\big(\text{Var}(\hat\beta)\big) + \Vert{}\text{Bias}(\hat\beta)\Vert{}^2$$
+
+### (d)
+
+Consider fitting the linear model subject to the constraint $A\beta = C$, where $A$ is $q \times (p+1)$ of rank $p+1$... actually of rank $q$, and $C$ a vector of constants. Show that the constrained least squares estimator is
+
+$$ \hat\beta_C = \hat\beta - (X'X)^{-1}A'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C), $$
+
+where $\hat\beta$ is the unconstrained least squares estimator.
+
+Lagrangian:
+
+$$L(\beta,\lambda) = (y-X\beta)'(y-X\beta) + \lambda'(A\beta - C)$$
+
+$$ = y'y - y'X\beta - \beta'X'y + \beta'X'X\beta + \lambda'A\beta - \lambda'C$$
+
+Since $y'X\beta$ is a scalar, it is equal to its transpose $\beta'X'y$.
+
+$$ \therefore L(\beta,\lambda) = y'y - 2\beta'X'y + \beta'X'X\beta + \lambda'A\beta - \lambda'C$$
+
+$$ \implies \frac{\partial L}{\partial \beta} = 0 - 2X'y + 2X'X\beta + A'\lambda = 0$$
+
+$$2X'X\hat\beta_C = 2X'y - A'\lambda$$
+
+$$\hat\beta_C = (X'X)^{-1}X'y - \tfrac{1}{2}(X'X)^{-1}A'\lambda$$
+
+$$\therefore \hat\beta_C = \hat\beta - \tfrac{1}{2}(X'X)^{-1}A'\lambda$$
+
+To find $\lambda$, impose the constraint $A\hat\beta_C = C$ by pre-multiplying the equation by $A$ such that
+
+$$A\hat\beta_C = A\hat\beta - \tfrac{1}{2}A(X'X)^{-1}A'\lambda$$
+
+$$C = A\hat\beta - \tfrac{1}{2}A(X'X)^{-1}A'\lambda$$
+
+we see
+
+$$\tfrac{1}{2}A(X'X)^{-1}A'\lambda = A\hat\beta - C$$
+
+$$\tfrac{1}{2}\lambda = \big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$$
+
+$$\lambda = 2\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$$
+
+hence
+
+$$\hat\beta_C = \hat\beta - \tfrac{1}{2}(X'X)^{-1}A' \left( 2\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C) \right)$$
+
+$$\therefore \hat\beta_C = \hat\beta - (X'X)^{-1}A'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$$
+
+### (e)
+
+Show that the difference between the residual sum of squares for the constrained and unconstrained models is
+
+$$RSS_C - RSS = (A\hat\beta - C)'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$$
+
+By definition,
+
+$$RSS_C = (y - X\hat\beta_C)'(y - X\hat\beta_C)$$
+
+Substitute $\hat\beta_C = \hat\beta - (X'X)^{-1}A'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$.
+
+Let $W = (X'X)^{-1}A'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$ such that $\hat\beta_C = \hat\beta - W$.
+
+$$RSS_C = (y - X(\hat\beta - W))'(y - X(\hat\beta - W))$$
+
+$$RSS_C = ((y - X\hat\beta) + XW)'((y - X\hat\beta) + XW)$$
+
+Let $\hat\varepsilon = y - X\hat\beta$.
+
+$$RSS_C = (\hat\varepsilon + XW)'(\hat\varepsilon + XW)$$
+
+$$RSS_C = \hat\varepsilon'\hat\varepsilon + \hat\varepsilon'XW + W'X'\hat\varepsilon + W'X'XW$$
+
+Note $X'\hat\varepsilon = X'(y - X\hat\beta) = X'y - X'X(X'X)^{-1}X'y = X'y - X'y = 0$.
+
+$$\therefore \hat\varepsilon'X = 0 \text{ and } X'\hat\varepsilon = 0$$
+
+$$RSS_C = \hat\varepsilon'\hat\varepsilon + W'X'XW$$
+
+Since $RSS = \hat\varepsilon'\hat\varepsilon$:
+
+$$\therefore RSS_C - RSS = W'X'XW$$
+
+Substitute $W$:
+
+$$W'X'XW = \Big((X'X)^{-1}A'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)\Big)' X'X \Big((X'X)^{-1}A'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)\Big)$$
+
+Note $(ABC)' = C'B'A'$ and $\big[A(X'X)^{-1}A'\big]^{-1}$ is symmetric.
+
+$$W' = (A\hat\beta - C)'\big[A(X'X)^{-1}A'\big]^{-1}A(X'X)^{-1}$$
+
+$$W'X'XW = (A\hat\beta - C)'\big[A(X'X)^{-1}A'\big]^{-1}A(X'X)^{-1} X'X (X'X)^{-1}A'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$$
+
+$$W'X'XW = (A\hat\beta - C)'\big[A(X'X)^{-1}A'\big]^{-1} \big(A(X'X)^{-1}A'\big) \big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$$
+
+$$\therefore W'X'XW = (A\hat\beta - C)'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$$
+
+$$\therefore RSS_C - RSS = (A\hat\beta - C)'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta - C)$$
+
+### (f)
+
+Hence show that $F = \dfrac{(RSS_C - RSS)/q}{RSS/(N-p-1)} \sim F_{q,N-p-1}$ under $H_0: A\beta = C$.
+
+Under $H_0: A\beta = C$, we can substitute $C$ with $A\beta$:
+
+$$A\hat\beta - C = A\hat\beta - A\beta = A(\hat\beta - \beta)$$
+
+Given the unconstrained estimator distribution $\hat\beta \sim N(\beta,\sigma^2(X'X)^{-1})$, the expected value is:
+
+$$E[A\hat\beta - C] = A(E[\hat\beta] - \beta) = A(\beta - \beta) = 0$$
+
+The variance is transformed via $\text{Var}(Az) = A\text{Var}(z)A'$:
+
+$$\text{Var}(A\hat\beta - C) = \text{Var}(A\hat\beta) = A\text{Var}(\hat\beta)A' = A\big(\sigma^2(X'X)^{-1}\big)A' = \sigma^2 A(X'X)^{-1}A'$$
+
+$$\therefore A\hat\beta - C \sim N\big(0,\ \sigma^2 A(X'X)^{-1}A'\big)$$
+
+For a multivariate normal vector $z \sim N(0, \Sigma)$, the quadratic form standardising $z$ by its covariance matrix follows $z'\Sigma^{-1}z \sim \chi^2_{\text{rank}(\Sigma)}$. Let $z = A\hat\beta - C$ and $\Sigma = \sigma^2 A(X'X)^{-1}A'$:
+
+$$z'\Sigma^{-1}z = (A\hat\beta-C)'\big[\sigma^2 A(X'X)^{-1}A'\big]^{-1}(A\hat\beta-C)$$
+
+$$z'\Sigma^{-1}z = \frac{1}{\sigma^2} (A\hat\beta-C)'\big[A(X'X)^{-1}A'\big]^{-1}(A\hat\beta-C)$$
+
+Substitute the result from part (e) for the numerator:
+
+$$\frac{RSS_C-RSS}{\sigma^2} \sim \chi^2_q$$
+
+using $q = \text{rank}(A)$.
+
+From part (b), $RSS/\sigma^2 \sim \chi^2_{N-p-1}$. To prove that $F$ follows an F-distribution, the numerator and denominator chi-square variables must be independent. We show this by proving $\hat\beta$ and $\hat\varepsilon$ are independent. For jointly normal variables, zero covariance implies independencei.e.
+
+$$\text{Cov}(\hat\beta, \hat\varepsilon) = \text{Cov}\big((X'X)^{-1}X'y,\ (I-H)y\big)$$
+
+Using $\text{Cov}(Ay, By) = A\text{Var}(y)B'$ and noting $I-H$ is symmetric,
+
+$$\text{Cov}(\hat\beta, \hat\varepsilon) = (X'X)^{-1}X' \text{Var}(y) (I-H)$$
+
+$$\text{Cov}(\hat\beta, \hat\varepsilon) = (X'X)^{-1}X' (\sigma^2 I) (I-H) = \sigma^2 (X'X)^{-1} X' (I-H)$$
+
+Expanding $X'(I-H)$
+
+$$X'(I-H) = X' - X'H = X' - X'X(X'X)^{-1}X' = X' - I X' = X' - X' = 0$$
+
+$$\therefore \text{Cov}(\hat\beta, \hat\varepsilon) = \sigma^2 (X'X)^{-1} (0) = 0$$
+
+Since $\hat\beta$ and $\hat\varepsilon$ are independent, $RSS_C-RSS$ (a function of $\hat\beta$) and $RSS$ (a function of $\hat\varepsilon$) are independent chi-square variables.
+
+The ratio of two independent chi-square variables, each divided by its degrees of freedom, is F-distributed. The $\sigma^2$ terms cancel out, giving
+
+$$F = \frac{\frac{RSS_C-RSS}{\sigma^2} / q}{\frac{RSS}{\sigma^2} / (N-p-1)}$$
+
+$$\therefore F = \frac{(RSS_C-RSS)/q}{RSS/(N-p-1)} \sim F_{q,N-p-1}$$
+
+## Question 2
+
+Consider Model 1, $Y = \beta_0 \mathbf{1} + \varepsilon$, and Model 2, $Y = X\beta + \varepsilon$, with $\varepsilon \sim N(0,\sigma^2 I)$ and $\mathbf{1}$ an $n$-vector of ones. Let $p = k-1$, let $\hat\beta$ be the OLS estimate for Model 2, and let $\bar y$ be the sample mean of $Y$.
+
+### (a)
+
+Show that $\hat\beta_0 = \bar y$.
+
+For Model 1, $Y = \beta_0 \mathbf{1} + \varepsilon$. Using $\hat\beta = (X'X)^{-1}X'Y$ with $X = \mathbf{1}$:
+
+$$\hat\beta_0 = (\mathbf{1}'\mathbf{1})^{-1}\mathbf{1}'Y$$
+
+$$\mathbf{1}'\mathbf{1} = \sum_{i=1}^n 1 = n$$
+
+$$\mathbf{1}'Y = \sum_{i=1}^n Y_i$$
+
+$$\implies \hat\beta_0 = n^{-1} \sum_{i=1}^n Y_i = \bar y$$
+
+Alternatively, minimize $S = \sum_{i=1}^n (Y_i - \beta_0)^2$:
+
+$$\frac{\partial S}{\partial \beta_0} = -2 \sum_{i=1}^n (Y_i - \beta_0) = 0$$
+
+$$\implies \sum_{i=1}^n Y_i - \sum_{i=1}^n \hat\beta_0 = 0$$
+
+$$\sum_{i=1}^n Y_i - n\hat\beta_0 = 0$$
+
+$$n\hat\beta_0 = \sum_{i=1}^n Y_i$$
+
+$$\therefore \hat\beta_0 = \frac{1}{n} \sum_{i=1}^n Y_i = \bar y$$
+
+### (b)
+
+For Model 1, $Y = \beta_0 \mathbf{1} + \varepsilon$ with $\hat\beta_0 = \bar{y}$.
+
+$$\hat\varepsilon_1 = Y - \bar{y}\mathbf{1}$$
+
+$$SSE_1 = \hat\varepsilon_1^T \hat\varepsilon_1 = \sum_{i=1}^n (Y_i - \bar{y})^2$$
+
+Model 1 has 1 parameter, so $df_1 = n - 1$.
+
+$$\therefore \hat\sigma^2_1 = \frac{SSE_1}{n-1} = \frac{1}{n-1}\sum_{i=1}^n (Y_i - \bar{y})^2$$
+
+### (c)
+
+Show that the residual sum of squares for Model 2 is $SSE_2 = Y'Y - \hat\beta'X'Y$.
+
+For Model 2, $Y = X\beta + \varepsilon$.
+
+$$SSE_2 = (Y - X\hat\beta)^T(Y - X\hat\beta)$$
+
+$$SSE_2 = Y^T Y - Y^T X\hat\beta - \hat\beta^T X^T Y + \hat\beta^T X^T X\hat\beta$$
+
+Note $Y^T X\hat\beta = (Y^T X\hat\beta)^T = \hat\beta^T X^T Y$.
+
+Using the normal equations $X^T X\hat\beta = X^T Y$:
+
+$$SSE_2 = Y^T Y - 2\hat\beta^T X^T Y + \hat\beta^T (X^T Y)$$
+
+$$\therefore SSE_2 = Y^T Y - \hat\beta^T X^T Y$$
+
+### (d)
+
+Provide the null and the alternate hypotheses in order to assess whether a significant regression model exists.
+
+$$ H_0: \beta_1 = \beta_2 = \cdots = \beta_p = 0 \qquad \text{vs} \qquad H_a: \beta_j \ne 0 \text{ for at least one } j \in \{1,\dots,p\}. $$
+
+### (e)
+
+Use your above answers to show that the required test statistic when undertaking the above hypothesis test is $F = \frac{\hat\beta^T X^T Y - n\bar{y}^2}{p S_2^2}$.
+
+Using the general F-test for nested models:
+
+$$F = \frac{(SSE_1 - SSE_2) / (df_1 - df_2)}{SSE_2 / df_2}$$
+
+Expand $SSE_1$:
+
+$$SSE_1 = \sum_{i=1}^n (Y_i - \bar{y})^2 = \sum_{i=1}^n Y_i^2 - 2\bar{y}\sum_{i=1}^n Y_i + n\bar{y}^2$$
+
+$$SSE_1 = Y^T Y - 2\bar{y}(n\bar{y}) + n\bar{y}^2 = Y^T Y - n\bar{y}^2$$
+
+Difference in sum of squares:
+
+$$SSE_1 - SSE_2 = (Y^T Y - n\bar{y}^2) - (Y^T Y - \hat\beta^T X^T Y)$$
+
+$$SSE_1 - SSE_2 = \hat\beta^T X^T Y - n\bar{y}^2$$
+
+Degrees of freedom: Model 2 has $p+1$ parameters, so $df_2 = n - p - 1$.
+
+$$df_1 - df_2 = (n - 1) - (n - p - 1) = p$$
+
+By definition, the estimated residual variance of Model 2 is $S_2^2 = \frac{SSE_2}{df_2}$.
+
+$$\therefore F = \frac{(\hat\beta^T X^T Y - n\bar{y}^2) / p}{S_2^2}$$
+
+### (f)
+
+where $S_2^2$ is the estimated residual variance of Model 2. Explain your reasoning. State any assumptions made where needed.
+
+$S_2^2 = SSE_2/(n-p-1)$. The reasoning is that $\hat\beta^T X^T Y - n\bar{y}^2$ measures how much of the total variability in $Y$ is explained by the predictors beyond the intercept, and comparing this, scaled by its degrees of freedom $p$, against the residual variance $S_2^2$ tests whether that explained variability is large relative to the background noise level. This mirrors the general constrained versus unconstrained argument of Question 1, with Model 1 playing the role of the restricted model under $A\beta = C$. Assumptions made: Normal, homoscedastic, independent errors i.e. $\varepsilon \sim N(0, \sigma^2 I)$ and that $X$ is of full column rank.
+
+### (g)
+
+By the same argument as Question 1(f), applied with $q = p$ restrictions and $N-p-1$ residual degrees of freedom, $F \sim F_{p,\,n-p-1}$ under $H_0$.
+
+## Question 3
+
+Find an orthonormal basis for $C(X)$, the column space of
+
+$$ X = \begin{pmatrix} 2 & -5 & 3 & 1 \\ 0 & 4 & -3 & -1 \\ -2 & -2 & 3 & 0 \end{pmatrix}. $$
+
+Let $x_1=(2,0,-2)'$, $x_2=(-5,4,-2)'$, $x_3=(3,-3,3)'$, $x_4=(1,-1,0)'$.
+
+$$\det[x_1\ x_2\ x_3] = 2(12-6) + 5(0-6) + 3(0+8) = 12 - 30 + 24 = 6$$
+
+$$\det[x_1\ x_2\ x_3] \ne 0 \implies x_1,x_2,x_3 \text{ are linearly independent}$$
+
+$$\therefore C(X) = \mathbb{R}^3 \text{ and } x_4 \text{ is redundant}$$
+
+Applying Gram-Schmidt to $x_1,x_2,x_3$:
+
+$$u_1 = x_1 = (2,0,-2)' \implies \Vert{}u_1\Vert{}^2 = 4 + 0 + 4 = 8$$
+
+$$x_2'u_1 = -10 + 0 + 4 = -6$$
+
+$$u_2 = x_2 - \frac{x_2'u_1}{u_1'u_1}u_1 = (-5,4,-2)' - \frac{-6}{8}(2,0,-2)' = \left(-\tfrac72,\,4,\,-\tfrac72\right)'$$
+
+$$\implies \Vert{}u_2\Vert{}^2 = \frac{49}{4} + 16 + \frac{49}{4} = \frac{81}{2}$$
+
+Note $x_3'u_1 = 6+0-6=0 \implies x_3 \perp u_1$.
+
+$$x_3'u_2 = -\frac{21}{2} - 12 - \frac{21}{2} = -33$$
+
+$$u_3 = x_3 - \frac{x_3'u_2}{u_2'u_2}u_2 = (3,-3,3)' - \frac{-33}{81/2}\left(-\tfrac72,4,-\tfrac72\right)' = \left(\tfrac{4}{27},\,\tfrac{7}{27},\,\tfrac{4}{27}\right)'$$
+
+$$\implies \Vert{}u_3\Vert{}^2 = \frac{16}{729} + \frac{49}{729} + \frac{16}{729} = \frac{81}{729} = \frac{1}{9}$$
+
+Normalising each $u_i \implies e_i = \frac{u_i}{\Vert{}u_i\Vert{}}$:
+
+$$e_1 = \frac{1}{\sqrt8}(2,0,-2)' = \frac{1}{\sqrt2}(1,0,-1)'$$
+
+$$e_2 = \frac{1}{\sqrt{81/2}}\left(-\tfrac72,\,4,\,-\tfrac72\right)' = \frac{\sqrt2}{18}(-7,8,-7)'$$
+
+$$e_3 = \frac{1}{\sqrt{1/9}}\left(\tfrac{4}{27},\,\tfrac{7}{27},\,\tfrac{4}{27}\right)' = \frac{1}{9}(4,7,4)'$$
+
+$$\therefore \{e_1,e_2,e_3\} \text{ is an orthonormal basis for } C(X).$$

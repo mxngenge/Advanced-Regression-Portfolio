@@ -1,0 +1,81 @@
+% preamble.tex
+\usepackage{microtype}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{tocloft}
+\usepackage{xcolor}
+\usepackage{placeins}
+\usepackage{float}
+\AtBeginDocument{\usepackage[capitalize,nameinlink]{cleveref}}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6\baselineskip}
+
+\newcommand{\HRule}{\rule{\linewidth}{0.6pt}}
+\definecolor{uctred}{RGB}{153,0,0}
+
+% ---------- ToC spacing + left red bars ----------
+\setlength{\cftbeforechapskip}{10pt}
+\setlength{\cftbeforesecskip}{6pt}
+\setlength{\cftchapindent}{0pt}
+\setlength{\cftchapnumwidth}{2.8em}
+\setlength{\cftsecindent}{2.8em}
+\setlength{\cftsecnumwidth}{3.2em}
+\renewcommand{\cftchapdotsep}{\cftdotsep}
+
+\newcommand{\tocleftbar}{%
+  \llap{\color{uctred}\rule{2pt}{1.1\baselineskip}\hspace{8pt}}%
+}
+\renewcommand{\cftchapfont}{\tocleftbar\normalfont\color{black}}
+\renewcommand{\cftchappagefont}{\normalfont\color{black}}
+\renewcommand{\cftsecfont}{\tocleftbar\normalfont\color{black}}
+\renewcommand{\cftsecpagefont}{\normalfont\color{black}}
+
+% ---------- Headers/footers ----------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.6pt}
+\fancyhead[L]{\nouppercase{\leftmark}}
+\fancyhead[R]{\thepage}
+
+\fancypagestyle{plain}{%
+  \fancyhf{}
+  \fancyhead[L]{\nouppercase{\leftmark}}
+  \fancyhead[R]{\thepage}
+  \renewcommand{\headrulewidth}{0.6pt}
+}
+\renewcommand{\chaptermark}[1]{\markboth{#1}{}}
+
+% ---------- Convenience macros ----------
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\Prob}{\mathbb{P}}
+\newcommand{\Var}{\mathrm{Var}}
+\newcommand{\Cov}{\mathrm{Cov}}
+\newcommand{\1}{\mathbf{1}}
+\newcommand{\bR}{\mathbf{r}}
+\newcommand{\SRhat}{\widehat{SR}}
+\newcommand{\dto}{\stackrel{d}{\longrightarrow}}
+\newcommand{\pto}{\stackrel{p}{\longrightarrow}}
+\newcommand{\ato}{\stackrel{a}{\longrightarrow}}
+\newcommand{\iid}{\text{IID}}
+\newcommand{\Zinv}{Z^{-1}}
+
+% ---------- Custom Title Page Override ----------
+\renewcommand{\maketitle}{
+  \begin{titlepage}
+  \centering
+  \vspace*{2cm}
+  \HRule\\[0.4cm]
+  {\LARGE \textbf{STA5090Z Advanced Topics in Regression}}\\[0.3cm]
+  {\large Portfolio: Collection of Tutorials, Practials and Extentsion work}\\[0.2cm]
+  \HRule\\[1.2cm]
+  {\large Nathan Mang'eng'e}\\[0.2cm]
+  {\large MNGNAT015}\\[1cm]
+  {\large Department of Statistical Sciences}\\
+  {\large University of Cape Town}\\[1cm]
+  {\large \today}
+  \vfill
+  \end{titlepage}
+}

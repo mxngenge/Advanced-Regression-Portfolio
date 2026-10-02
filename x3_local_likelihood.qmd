@@ -1,0 +1,195 @@
+---
+title: "Extension III: Local Likelihood and Locally Linear Poisson Regression"
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r}
+#| message: false
+#| warning: false
+
+library(knitr)
+library(latex2exp)
+```
+
+This extension builds upon the local likelihood formulation introduced in the course notes and detailed in Section 6.5 of Hastie, Tibshirani and Friedman (2009, p. 205). The central premise is that any parametric model can be localized provided that the fitting algorithm accommodates observation weights, with maximum likelihood estimation forming an important class of such models. Writing $\ell(\beta \mid y_i; x_i)$ for the log-likelihood contribution of observation $i$, the global log-likelihood in which a single parameter vector $\beta$ serves every covariate value $x$ is given by
+
+$$\ell(\beta \mid \mathbf{y}; \mathbf{X}) = \sum_{i=1}^{N} \ell(\beta \mid y_i; x_i),$$
+
+while the log-likelihood local to a target point $x_0$ is defined as
+
+$$\ell(\beta(x_0) \mid \mathbf{y}; \mathbf{X}) = \sum_{i=1}^{N} K_\lambda(x_0, x_i)\,\ell(\beta(x_0) \mid y_i; x_i),$$
+
+where $K_\lambda(x_0, x)$ represents a kernel function that decays with the distance between $x$ and $x_0$, and $\lambda$ denotes its bandwidth. By allowing the parameters to vary as a function of the target point, a model that is linear globally is only required to satisfy linearity locally.
+
+This extension extends this theoretical framework to a concrete regression problem with a non-Gaussian response by supplying a complete fitting algorithm, a likelihood-based cross-validation bandwidth selection rule, and a worked case study using call centre data. Following Hastie et al. (2009), we employ the tri-cube kernel $D(t) = (1 - \vert{}t\vert{}^3)^3$ for $\vert{}t\vert{} \le 1$ and zero otherwise, setting $K_\lambda(x_0, x) = D(\vert{}x - x_0\vert{}/\lambda)$ so that $\lambda$ corresponds to the radius of the local window. The parametric model of choice is the Poisson log-linear model $\log \mu(x) = \beta_0 + \beta_1 x$. Its local counterpart is fitted using kernel weights within a weighted generalized linear model framework, and the bandwidth is selected via cross-validation across whole days.
+
+### Local Poisson Regression
+
+For a count response, let $y_i \mid x_i \sim \text{Poisson}(\mu(x_i))$ with $\log \mu(x) = \eta(x)$. The global log-linear model specifies $\eta(x) = \beta_0 + \beta_1 x$. Its local counterpart takes the form $\eta(x) = \beta_0(x_0) + \beta_1(x_0)(x - x_0)$ for $x$ near $x_0$, yielding the local log-likelihood (up to a term free of $\beta$):
+
+$$\ell(\beta(x_0) \mid \mathbf{y}; \mathbf{X}) = \sum_{i=1}^{N} K_\lambda(x_0, x_i)\big\{y_i \eta_i - e^{\eta_i}\big\}, \qquad \eta_i = \beta_0(x_0) + \beta_1(x_0)(x_i - x_0).$$
+
+Centring the covariate at $x_0$ ensures that $\beta_0(x_0)$ equals the fitted linear predictor at the target point, meaning the estimated mean function is given by $\hat\mu(x_0) = \exp\{\hat\beta_0(x_0)\}$, while the slope acts as a nuisance parameter capturing local trends. Differentiating with respect to the parameters yields the score equations:
+
+$$\sum_{i=1}^{N} K_\lambda(x_0, x_i)\,(y_i - \hat\mu_i)\begin{pmatrix} 1 \\ x_i - x_0 \end{pmatrix} = 0,$$
+
+which match ordinary Poisson score equations where kernel weights act as prior weights. Consequently, each local problem reduces to a weighted Poisson regression solved via iteratively reweighted least squares, allowing a weighted call to `glm.fit` to serve as the entire fitting engine. Furthermore, the intercept equation guarantees that kernel-weighted residuals sum to zero, ensuring local calibration within every neighbourhood—a property the global model possesses only across the sample globally.
+
+The bandwidth $\lambda$ controls the bias-variance trade-off. A small $\lambda$ assigns appreciable weight to very few observations, allowing the estimate to track local features at the expense of higher variance, whereas a large $\lambda$ flattens the weights across the sample, causing $\hat\mu(x_0)$ to converge toward the global log-linear fit. The global model thus represents the limiting member of a family indexed by $\lambda$.
+
+#### Implementation
+
+```{r}
+
+tricube <- function(u) ifelse(abs(u) < 1, (1 - abs(u)^3)^3, 0)
+
+# Local linear Poisson likelihood at a single target point x0.
+loclik_fit <- function(x0, x, y, lambda) {
+  d <- x - x0
+  w <- tricube(d / lambda)
+  k <- w > 0
+  glm.fit(cbind(1, d[k]), y[k], weights = w[k], 
+          family = poisson())$coefficients
+}
+
+# refitting once per distinct value of xnew
+loclik_predict <- function(xnew, x, y, lambda) {
+  ug   <- unique(xnew)
+  beta <- sapply(ug, loclik_fit, x = x, y = y, lambda = lambda)
+  exp(beta[1, match(xnew, ug)])
+}
+
+pois_dev <- function(y, mu) 2 * sum(ifelse(y > 0, y*log(y/mu),0) - (y-mu))
+```
+
+### Case Study: Call Arrivals at a Bank Call Centre
+
+The dataset records call volumes received by a major North American commercial bank in five-minute intervals between 7:00 and 21:00 on weekdays from 3 March to 24 October 2003, comprising 164 days of 169 intervals each. Available as `bank_calls` in the `fpp3` package, the response variable represents arrival counts in a fixed window, making the Poisson model a natural baseline. The single covariate is the time of day expressed in hours, focusing the analysis on the arrival rate profile.
+
+Pooling all weekdays simplifies the problem to a single covariate. Day-of-week effects and daily baseline variations are intentionally set aside, with implications for dispersion addressed below. Data splitting occurs at the day level rather than the row level (70% training, 30% testing) to prevent information leakage across correlated intraday intervals.
+
+```{r}
+
+data("bank_calls", package = "fpp3")
+calls <- as.data.frame(bank_calls)
+
+calls$day <- format(calls$DateTime, "%Y-%m-%d", tz = "UTC")
+calls$hr  <- as.numeric(format(calls$DateTime, "%H", tz = "UTC")) +
+  as.numeric(format(calls$DateTime, "%M", tz = "UTC")) / 60
+
+set.seed(1409)
+days      <- sort(unique(calls$day))
+train_day <- sample(days, round(0.7 * length(days)))
+train     <- calls[calls$day %in% train_day, ]
+test      <- calls[!(calls$day %in% train_day), ]
+
+# Global parametric baselines
+fit_lin  <- glm(Calls ~ hr, data = train, family = poisson)
+fit_quad <- glm(Calls ~ hr + I(hr^2), data = train, family = poisson)
+```
+
+```{r}
+#| fig-width: 6
+#| fig-height: 4.5
+#| fig-cap: "Calls per five minute interval against time of day. Grey curves are 25 randomly chosen training days, the black curve is the mean across all training days, and the coloured curves are the two global Poisson regressions."
+
+prof <- tapply(train$Calls, train$hr, mean)
+tt   <- as.numeric(names(prof))
+
+plot(NA, xlim = range(tt), ylim = range(train$Calls),
+     xlab = "Time of day (hours)", ylab = "Calls per 5 minutes")
+for (d in sample(train_day, 25)) {
+  s <- train[train$day == d, ]
+  lines(s$hr, s$Calls, col = adjustcolor("grey50", 0.4))
+}
+lines(tt, prof, lwd = 2)
+lines(tt, predict(fit_lin,  data.frame(hr = tt), type = "response"),
+      col = "red", lwd = 2)
+lines(tt, predict(fit_quad, data.frame(hr = tt), type = "response"),
+      col = "forestgreen", lwd = 2)
+legend("topright", c("Training mean", "Global log-linear", 
+                     "Global log-quadratic"),
+       col = c("black", "red", "forestgreen"), lwd = 2, bty = "n")
+```
+
+The empirical mean profile exhibits a steep rise between 8:00 and 9:30, plateaus near 10:30, declines gradually through the afternoon with a sharper drop between 16:00 and 17:30, and displays a minor opening-interval spike. The global log-linear model imposes a fdownward trend and fails entirely to capture this non-linear shape. While the global log-quadratic model does a reasonable job capturing the overall macro-shape, particularly between hours 16 and 20, it fails to properly represent the initial rapid morning rise and the exact inflection point where the afternoon decline begins. Furthermore, because it is symmetric on the log scale, it cannot reconcile the asymmetry between the steep morning ascent and the gentler afternoon descent.
+
+```{r}
+#| fig-width: 10
+#| fig-height: 4.5
+#| fig-cap: "Local linear Poisson fits at two target points with lambda = 1 hour. Point size is proportional to the tri-cube weight, points are training-mean call counts shown on the log scale, the line is the local linear predictor, and the red dot is the fitted value at the target."
+
+par(mfrow = c(1, 2))
+for (x0 in c(8.75, 13)) {
+  lam  <- 1
+  beta <- loclik_fit(x0, train$hr, train$Calls, lam)
+  w    <- tricube((tt - x0) / lam)
+  win  <- w > 0
+  plot(tt[win], log(prof[win]), pch = 20, cex = 0.3 + 2 * w[win],
+       xlab = "Time of day (hours)", ylab = "log(mean calls)",
+       main = TeX(paste0("Target $x_0$ = ", x0)))
+  lines(tt[win], beta[1] + beta[2] * (tt[win] - x0), lwd = 2, col = "blue")
+  points(x0, beta[1], pch = 19, col = "red", cex = 1.5)
+}
+par(mfrow = c(1, 1))
+```
+
+This isolated local regression for target points $x_0$ provides a clear illustration of the mechanism. At a target of 8:45, the local window falls along the steep morning ramp, yielding a large, positive local slope. Conversely, at 13:00, the window rests on the afternoon decline, resulting in a negative local slope. A global log-linear model enforces a single compromise slope across the entire day, misrepresenting local dynamics at both points. The local model requires only approximate linearity on the log scale within the active window, extracting the fitted value directly from the local intercept.
+
+```{r}
+
+K <- 5
+lambdas <- c(0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4)
+
+# Folds are formed from whole days
+fold_of_day <- sample(rep(1:K, length.out = length(train_day)))
+train$fold  <- fold_of_day[match(train$day, train_day)]
+
+loclik_cv <- function(dat, lambdas, K) {
+  sapply(lambdas, function(l) {
+    dev <- 0
+    for (k in 1:K) {
+      tr  <- dat[dat$fold != k, ]
+      va  <- dat[dat$fold == k, ]
+      dev <- dev + pois_dev(va$Calls, loclik_predict(va$hr, tr$hr, 
+                                                     tr$Calls, l))
+    }
+    dev / nrow(dat)
+  })
+}
+
+cv_dev     <- loclik_cv(train, lambdas, K)
+lambda_hat <- lambdas[which.min(cv_dev)]
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 4.5
+#| fig-cap: "Left: five-fold cross-validated Poisson deviance per observation against bandwidth, with folds formed from whole days. Right: local linear fits at three bandwidths against the training mean profile."
+
+par(mfrow = c(1, 2))
+plot(lambdas, cv_dev, type = "b", pch = 20, log = "x", xaxt = "n",
+     xlab = TeX("Bandwidth $\\lambda$ (hours, log scale)"), 
+     ylab = "CV deviance per observation")
+axis(1, at = lambdas, labels = lambdas)
+abline(v = lambda_hat, lty = 2, col = "blue")
+
+plot(tt, prof, pch = 20, cex = 0.5, xlab = "Time of day (hours)",
+     ylab = "Calls per 5 minutes")
+cols <- c("blue", "darkorange", "red")
+for (i in seq_along(cols)) {
+  l <- c(lambda_hat, 1, 4)[i]
+  lines(tt, loclik_predict(tt, train$hr, train$Calls, l), col = cols[i],
+        lwd = 2)
+}
+legend("topright", paste0(TeX("$\\lambda$ = "), c(lambda_hat, 1, 4)),
+       col = cols, lwd = 2, bty = "n")
+par(mfrow = c(1, 1))
+```
+
+The cross-validated deviance increases monotonically over the tested grid, selecting the minimum evaluated bandwidth ($\lambda = 0.25$ hours). Due to high computational costs associated with the local likelihood setup, a finer grid was omitted, but this boundary selection highlights key properties of the design. The bandwidth $\lambda = 4$ represents the point where we see the CV error growing rapidly relative to the lower bandwidths; even so, $\lambda = 4$ gives a much better representation than our quadratic likelihood, which is remarkable, though it still misses the rapid rise and decline just before midday. Meanwhile, $\lambda = 1$ fits really well to the data, capturing every local kink. However, the minimum bandwidth ($\lambda = 0.25$) seems to pretty much interpolate every point and thus could be prone to overfitting.
+
+### References
+
+Hastie, T., Tibshirani, R. and Friedman, J. (2009). *The Elements of Statistical Learning: Data Mining, Inference, and Prediction*, 2nd edition. Springer.

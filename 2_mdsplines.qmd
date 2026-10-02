@@ -1,0 +1,67 @@
+---
+title: "Multidimensional Splines"
+---
+
+### Wood Chapter 3 Exercise 4
+
+Show that the $\beta$ minimizing $$ ||y - X\beta||^{2} + \lambda\beta^{\prime}P\beta $$ is given by $$ \hat{\beta} = (X^{\prime}X + \lambda P)^{-1}X^{\prime}y $$
+
+**Ans:**\
+Assume $P \succeq 0$, $\lambda > 0$. $$ S(\beta) := ||y - X\beta||^{2} + \lambda\beta^{\prime}P\beta = y'y - 2\beta'X'y + \beta'X'X\beta + \lambda\beta'P\beta. $$
+
+Note,
+
+$\partial_\beta\, a'\beta = a$, and
+
+$\partial_\beta\, \beta'M\beta = (M + M')\beta$,
+
+since $\partial_{\beta_k} \sum_{i,j} M_{ij}\beta_i\beta_j = \sum_j M_{kj}\beta_j + \sum_i M_{ik}\beta_i = [M\beta + M'\beta]_k$): $$ \frac{\partial S}{\partial\beta} = -2X'y + 2X'X\beta + \lambda(P + P')\beta = 0 \ \Rightarrow\ \left(X'X + \lambda\frac{P + P'}{2}\right)\beta = X'y. $$
+
+$$ \therefore \hat\beta = \left(X'X + \lambda\frac{P + P'}{2}\right)^{-1}X'y. $$
+
+Thus, assuming P symmetric,
+
+$$ \hat\beta = (X'X + \lambda P)^{-1}X'y. $$
+
+Let $A := X'X + \lambda P$. $A$ is invertible when $X$ has full column rank, i.e., $\|X\beta\|^2 = 0 \implies \beta = 0$. So for $\beta \ne 0$: $$ \beta'A\beta = \beta'(X'X + \lambda P)\beta = \beta'X'X\beta + \lambda\beta'P\beta = \|X\beta\|^2 + \lambda\beta'P\beta > 0. $$ Thus $A \succ 0$.
+
+$\frac{\partial S}{\partial\beta} = -2X'y + 2X'X\beta + \lambda(P + P')\beta = -2X'y + 2X'X\beta + 2\lambda P\beta= -2X'y + 2A\beta$.
+
+$\implies$ the Hessian is $\partial^2 S/\partial\beta\partial\beta' = 2A \succ 0$.
+
+Because the Hessian is positive definite, $S(\beta)$ is strictly convex and the stationary point $\hat\beta$ is the unique global minimum. $\blacksquare$
+
+### P-spline penalty in matrix form
+
+For P-splines (penalize squared difference between adjacent $\beta_{i}$ values, show that $$ P = \sum_{i=1}^{k-1}(\beta_{i+1} - \beta_{i})^{2} $$ can be written as $$ P = \beta^{\prime}\begin{bmatrix}1&-1&0&\dots\\ -1&2&-1&\dots\\ 0&-1&2&\dots\\ \vdots&\vdots&\vdots&\ddots\end{bmatrix}\beta $$
+
+**Ans:**\
+let $D$ be the $(k-1) \times k$ first-difference matrix, $$ D = \begin{pmatrix} -1 & 1 & 0 & \cdots & 0 \\ 0 & -1 & 1 & \cdots & 0 \\ & & \ddots & \ddots & \\ 0 & \cdots & 0 & -1 & 1 \end{pmatrix}, \qquad D\beta = (\beta_2 - \beta_1, \dots, \beta_k - \beta_{k-1})'. $$ Then $$ \sum_{i=1}^{k-1}(\beta_{i+1} - \beta_i)^2 = \|D\beta\|^2 = \beta'D'D\beta, \qquad P = D'D. $$
+
+And clearly, $$ D'D = \begin{pmatrix} -1 & 0 & \cdots & 0 \\ 1 & -1 & \cdots & 0 \\ 0 & 1 & \ddots & \vdots \\ \vdots & \vdots & \ddots & -1 \\ 0 & 0 & \cdots & 1 \end{pmatrix} \begin{pmatrix} -1 & 1 & 0 & \cdots & 0 \\ 0 & -1 & 1 & \cdots & 0 \\ \vdots & & \ddots & \ddots & \vdots \\ 0 & \cdots & 0 & -1 & 1 \end{pmatrix} = \begin{pmatrix} 1 & -1 & 0 & \cdots & 0 \\ -1 & 2 & -1 & \cdots & 0 \\ 0 & -1 & 2 & \cdots & 0 \\ \vdots & & \ddots & \ddots & \vdots \\ 0 & \cdots & & -1 & 1 \end{pmatrix} = P. $$$\blacksquare$
+
+### Choosing $\lambda$ by minimising the RSS
+
+The 'obvious' way to estimate smoothing parameters is by treating smoothing parameters just like the other model parameters, $\beta$, and to choose $\lambda$ to minimize the residual sum of squares for the fitted model. What estimate of $\lambda$ will such an approach always produce?
+
+**Ans:**\
+$\hat\lambda = 0$, i.e. the unpenalised fit. $R(\beta) := \|y - X\beta\|^2$, $Q(\beta) := \beta'P\beta$ and let $\hat\beta_\lambda = \arg\min_\beta R + \lambda Q$. Then $$ \text{RSS}(\lambda) = R(\hat\beta_\lambda) \ge \min_\beta R(\beta) = R(\hat\beta_0) = \text{RSS}(0) $$ trivially, since $\hat\beta_0$ minimises $R$ over *all* $\beta$, and $\hat\beta_\lambda$ is just one particular $\beta$.
+
+### The roughness penalty as $\beta'S\beta$
+
+Show that for any function $f$, which has a basis expansion $$ f(x) = \sum_{j}\beta_{j}b_{j}(x), $$ it is possible to write $$ \int f^{\prime\prime}(x)^{2}dx = \beta^{\prime}S\beta, $$ where the coefficient matrix $S$ can be expressed in terms of the known basis functions $b_{j}$ (assuming that these possess at least two (integrable) derivatives). As usual $\beta$ is a parameter vector with $\beta_{j}$ in its $j^{th}$ element.
+
+**Ans:**\
+Write $b''(x) = (b_1''(x), \dots, b_k''(x))'$. 
+
+$$ \implies f''(x) = \sum_j\beta_j b_j''(x) = b''(x)'\beta = \beta'b''(x), $$ 
+
+$$ f''(x)^2 = \left(\sum_j \beta_j b_j''(x)\right)\left(\sum_l \beta_l b_l''(x)\right) = \sum_{j,l} \beta_j \beta_l b_j''(x)b_l''(x) = \beta'\,b''(x)b''(x)'\,\beta. $$
+
+Integrate, swapping the finite sum and the integral (Fubini):
+
+$$ \int f''(x)^2\,dx = \int \sum_{j,l} \beta_j \beta_l b_j''(x)b_l''(x)\,dx = \sum_{j,l} \beta_j \beta_l \underbrace{\int b_j''(x)b_l''(x)\,dx}_{S_{jl}}. $$ 
+
+Equivalently in matrix form, since $\beta$ does not depend on $x$: 
+
+$$ \int f''(x)^2\,dx = \beta'\left[\int b''(x)b''(x)'\,dx\right]\beta = \beta'S\beta, \qquad S_{jl} = \int b_j''(x)\,b_l''(x)\,dx. \ \blacksquare $$

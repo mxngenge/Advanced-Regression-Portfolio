@@ -1,0 +1,250 @@
+---
+title: "Tutorial 2"
+---
+
+## Question 1
+
+### (a)
+
+Model: $y = X\beta + \varepsilon$\
+$y$: $N \times 1$ response vector, $X$: $N \times (p+1)$ design matrix, $\beta$: $(p+1) \times 1$ coefficient vector, $\varepsilon$: $N \times 1$ error vector with $E[\varepsilon] = 0$ and $\text{Var}(\varepsilon) = \sigma^2 I$
+
+Minimise the penalised residual sum of squares for $\lambda \ge 0$:
+
+$$RSS_{ridge}(\beta) = (y-X\beta)'(y-X\beta) + \lambda\beta'\beta$$
+
+$$RSS_{ridge}(\beta) = y'y - 2\beta'X'y + \beta'X'X\beta + \lambda\beta'\beta$$
+
+$$\frac{\partial RSS_{ridge}}{\partial \beta} = -2X'y + 2X'X\beta + 2\lambda\beta = 0$$
+
+$$\implies X'X\beta + \lambda\beta = X'y$$
+
+$$\implies (X'X + \lambda I)\beta = X'y$$
+
+$$\therefore \hat\beta^{ridge} = (X'X + \lambda I)^{-1}X'y$$
+
+### (b)
+
+Show that $\hat\beta^{ridge}$ is a biased estimator when $\lambda>0$.
+
+$$E[\hat\beta^{ridge}] = E\big[(X'X+\lambda I)^{-1}X'y\big]$$
+
+$$= (X'X+\lambda I)^{-1}X'E[y]$$
+
+Given $E[y] = X\beta$:
+
+$$= (X'X+\lambda I)^{-1}X'X\beta$$
+
+For $\lambda > 0$, $(X'X+\lambda I)^{-1}X'X \ne I \implies E[\hat\beta^{ridge}] \ne \beta$.
+
+By definition, $\text{Bias}(\hat\beta^{ridge}) = E[\hat\beta^{ridge}] - \beta$:
+
+$$\text{Bias}(\hat\beta^{ridge}) = (X'X+\lambda I)^{-1}X'X\beta - \beta$$
+
+$$= \big((X'X+\lambda I)^{-1}X'X - I\big)\beta$$
+
+Substitute $I = (X'X+\lambda I)^{-1}(X'X+\lambda I)$:
+
+$$= \big((X'X+\lambda I)^{-1}X'X - (X'X+\lambda I)^{-1}(X'X+\lambda I)\big)\beta$$
+
+$$= (X'X+\lambda I)^{-1}(X'X - X'X - \lambda I)\beta$$
+
+$$= (X'X+\lambda I)^{-1}(-\lambda I)\beta$$
+
+$$\therefore \text{Bias}(\hat\beta^{ridge}) = -\lambda(X'X+\lambda I)^{-1}\beta$$
+
+For $\lambda>0$ and $\beta \ne 0$, $\text{Bias}(\hat\beta^{ridge}) \ne 0 \implies \hat\beta^{ridge}$ is biased.
+
+### (c)
+
+Find $\text{Var}[\hat\beta^{ridge}]$, the variance of the ridge regression estimator.
+
+$$\text{Var}(\hat\beta^{ridge}) = \text{Var}\big((X'X+\lambda I)^{-1}X'y\big)$$
+
+Using $\text{Var}(Ay) = A\text{Var}(y)A'$:
+
+$$= (X'X+\lambda I)^{-1}X' \text{Var}(y) \big((X'X+\lambda I)^{-1}X'\big)'$$
+
+$$= (X'X+\lambda I)^{-1}X' \text{Var}(y) X(X'X+\lambda I)^{-1}$$
+
+Given $\text{Var}(y) = \sigma^2 I$:
+
+$$= (X'X+\lambda I)^{-1}X' (\sigma^2 I) X(X'X+\lambda I)^{-1}$$
+
+$$\therefore \text{Var}(\hat\beta^{ridge}) = \sigma^2 (X'X+\lambda I)^{-1}X'X(X'X+\lambda I)^{-1}$$
+
+### (d)
+
+As $\lambda$ increases from zero, the ridge estimator moves further away from the unbiased OLS solution, so its bias grows, while the penalty stabilises the estimator by pulling the coefficients toward zero, so its variance shrinks. At $\lambda = 0$ ridge reduces exactly to OLS, which is unbiased but can have large variance when the columns of $X$ are highly collinear. As $\lambda \to \infty$ the coefficients are shrunk all the way to zero, giving maximal bias and minimal variance. Because of this trade off, choosing an intermediate value of $\lambda$ can give a smaller overall mean squared error than the unbiased OLS estimator, even though the resulting estimator is biased.
+
+## Question 2
+
+### (c)
+
+How does the ridge regression estimator compare to the ordinary least squares estimator in the following cases?
+
+i.  $\lambda \rightarrow 0$
+
+$$\hat\beta^{ridge} = (X'X+\lambda I)^{-1}X'y$$
+
+As $\lambda \to 0$:
+
+$$(X'X+\lambda I)^{-1} \to (X'X)^{-1}$$
+
+$$\implies \hat\beta^{ridge} \to (X'X)^{-1}X'y$$
+
+$$\therefore \hat\beta^{ridge} \to \hat\beta^{ls}$$
+
+ii. The columns of the input matrix are orthonormal.
+
+$$X'X = I$$
+
+$$\implies \hat\beta^{ls} = (I)^{-1}X'y = X'y$$
+
+$$\hat\beta^{ridge} = (I+\lambda I)^{-1}X'y$$
+
+$$= ((1+\lambda)I)^{-1}X'y$$
+
+$$= \frac{1}{1+\lambda}X'y$$
+
+$$\therefore \hat\beta^{ridge} = \frac{1}{1+\lambda}\hat\beta^{ls}$$
+
+### (d)
+
+In ridge regression estimation, what happens when $\lambda\rightarrow\infty$?
+
+$$\hat\beta^{ridge} = (X'X+\lambda I)^{-1}X'y$$
+
+As $\lambda \to \infty$, the term $\lambda I$ dominates $X'X$:
+
+$$(X'X+\lambda I)^{-1} \to (\lambda I)^{-1} = \frac{1}{\lambda}I$$
+
+As $\frac{1}{\lambda}I \to 0$:
+
+$$\implies \hat\beta^{ridge} \to 0$$
+
+$\therefore$ Every coefficient is shrunk fully to zero, and the fitted model collapses to having no predictors.
+
+## Question 3
+
+### (a)
+
+Use the Gram-Schmidt procedure to find an orthogonal basis $z_1, z_2, z_3$ for the given vector space. Let $x_1, x_2, x_3$ be a non-orthogonal basis.
+
+Apply the Gram-Schmidt procedure:
+
+$$z_1 = x_1$$
+
+$$z_2 = x_2 - \frac{z_1'x_2}{z_1'z_1}z_1$$
+
+$$z_3 = x_3 - \frac{z_1'x_3}{z_1'z_1}z_1 - \frac{z_2'x_3}{z_2'z_2}z_2$$
+
+Check orthogonality ($z_i'z_j = 0$ for $i \neq j$):
+
+$$z_2'z_1 = \left( x_2 - \frac{z_1'x_2}{z_1'z_1}z_1 \right)' z_1$$
+
+$$= x_2'z_1 - \frac{z_1'x_2}{z_1'z_1}z_1'z_1$$
+
+$$= x_2'z_1 - x_2'z_1 = 0$$
+
+$$\implies z_2 \perp z_1$$
+
+By the exact same expansion for $z_3$:
+
+$$z_3'z_1 = x_3'z_1 - \frac{z_1'x_3}{z_1'z_1}z_1'z_1 - 0 = x_3'z_1 - x_3'z_1 = 0$$
+
+$$z_3'z_2 = x_3'z_2 - 0 - \frac{z_2'x_3}{z_2'z_2}z_2'z_2 = x_3'z_2 - x_3'z_2 = 0$$
+
+$$\implies z_3 \perp z_1 \text{ and } z_3 \perp z_2$$
+
+Since each $z_i$ is formed by adding or subtracting a linear combination of vectors already in the span:
+
+$$\text{span}(z_1, z_2, z_3) = \text{span}(x_1, x_2, x_3)$$
+
+$$\therefore \{z_1, z_2, z_3\} \text{ is an orthogonal basis.}$$
+
+### (b)
+
+Use your answer in part (a) to show that the matrix $X$ with columns $x_1, x_2, x_3$, can be written as $X=QR$, where $R$ is an upper triangular matrix, and the columns of $Q$ are orthonormal.
+
+Rearrange the Gram-Schmidt equations:
+
+$$x_1 = z_1$$
+
+$$x_2 = \frac{z_1'x_2}{z_1'z_1}z_1 + z_2$$
+
+$$x_3 = \frac{z_1'x_3}{z_1'z_1}z_1 + \frac{z_2'x_3}{z_2'z_2}z_2 + z_3$$
+
+Let $c_{ij} = \frac{z_i'x_j}{z_i'z_i}$ and let $Z = [z_1\ z_2\ z_3]$. In matrix form:
+
+$$X = Z \begin{pmatrix} 1 & c_{12} & c_{13} \\ 0 & 1 & c_{23} \\ 0 & 0 & 1 \end{pmatrix}$$
+
+$$X = Z\tilde R$$
+
+where $\tilde R$ is an upper triangular matrix.
+
+To make the columns of $Z$ orthonormal, let $D = \text{diag}(\Vert{}z_1\Vert{},\Vert{}z_2\Vert{},\Vert{}z_3\Vert{})$ and define $Q = ZD^{-1}$.
+
+$$\implies Z = QD$$
+
+Substitute $Z$ into the matrix equation:
+
+$$X = (QD)\tilde R$$
+
+$$X = Q(D\tilde R)$$
+
+Let $R = D\tilde R$. The product of a diagonal matrix $D$ and an upper triangular matrix $\tilde R$ remains upper triangular.
+
+$$\therefore X = QR$$
+
+### (c)
+
+(c) Find the least squares estimator $\hat\beta^{ls}$ and the predicted response $\hat y$ in terms of $Q$ and $R$.
+
+Given $X = QR$ and $Q'Q = I$ (since columns of $Q$ are orthonormal):
+
+$$X'X = (QR)'(QR) = R'Q'QR = R'IR = R'R$$
+
+$$X'y = (QR)'y = R'Q'y$$
+
+Substitute into $\hat\beta^{ls} = (X'X)^{-1}X'y$:
+
+$$\hat\beta^{ls} = (R'R)^{-1}R'Q'y$$
+
+$$= R^{-1}(R')^{-1}R'Q'y$$
+
+$$= R^{-1} I Q'y$$
+
+$$\therefore \hat\beta^{ls} = R^{-1}Q'y$$
+
+For the predicted response $\hat y = X\hat\beta^{ls}$:
+
+$$\hat y = (QR)(R^{-1}Q'y)$$
+
+$$= Q(RR^{-1})Q'y$$
+
+$$= Q I Q'y$$
+
+$$\therefore \hat y = QQ'y$$
+
+## Question 4
+
+### (a)
+
+Ridge uses an $L_2$ penalty ($\lambda \sum \beta_j^2$). The penalty is smooth and differentiable. It shrinks coefficients continuously toward zero but never exactly to zero $\implies$ retains all predictors in the model.
+
+Lasso uses an $L_1$ penalty ($\lambda \sum \vert{}\beta_j\vert{}$). The penalty is non-differentiable at zero (has a "corner"). This forces some coefficients to become exactly zero $\implies$ performs variable selection alongside shrinkage.
+
+### (b)
+
+As regression shrinkage methods, what is the main difference between Lasso and Ridge regression? Elaborate.
+
+Give in Lagrangian form, the expression of the Lasso estimator $\hat\beta^{lasso}$.
+
+$$\hat\beta^{lasso} = \arg\min_\beta \left\{ (y-X\beta)'(y-X\beta) + \lambda\sum_{j=1}^{p} \vert{}\beta_j\vert{} \right\} = \arg\min_\beta \left\{ \Vert{}y-X\beta\Vert{}^2 + \lambda\Vert{}\beta\Vert{}_1 \right\}$$
+
+### (c)
+
+An advantage is that automatic variable selection. By driving some coefficients exactly to zero, it produces a sparser, more interpretable model.
+
+A disadvantage is that No closed-form solution. Because the $L_1$ penalty is not differentiable at zero, the estimates cannot be solved algebraically and require numerical optimisation methods.

@@ -1,0 +1,592 @@
+---
+title: "Extension I: Wavelet-Based Jump Detection and Volatility Estimation for High-Frequency Data"
+---
+
+In high-frequency finance, traditional realised volatility estimators are upwardly biased because they capture both the continuous diffusion and discrete price jumps. It is with no surprise that along the years there have been many applications to separate the micro and macro structures that comprise the time series to correct for such jumps.
+
+To this end, we implement an application of wavelets by closely following a foundational paper that structures a computational pipeline to adjust for price jumps.
+
+### Mathematical formulation
+
+We model the latent logarithmic asset price $X_t = \ln S_t$ as an Itô semimartingale. Using a Merton-style structure,
+
+$$
+dX_t = \mu_t \, dt + \sigma_t \, dW_t + J_t \, dN_t ,
+$$
+
+where $W_t$ is a standard Brownian motion, $N_t$ is a Poisson counting process, and $J_t$ denotes the random jump magnitude. The total quadratic variation over $[0,T]$ decomposes into a continuous integrated-variance term and a discontinuous jump-variation term:
+
+$$
+[X,X]_T = \int_0^T \sigma_s^2 \, ds \; + \sum_{0 < s \le T} (\Delta X_s)^2 \;=:\; \Theta + \Psi .
+$$
+
+The actually observed price additionally carries market microstructure noise,
+
+$$
+Y_t = X_t + \epsilon_t, \qquad \epsilon_t \overset{iid}{\sim} N(0,\eta^2),\ \ \epsilon_t \perp X_t .
+$$
+
+The object of primary economic interest is typically isolating $\Theta$, the persistent continuous risk that is fundamental to asset pricing and standard volatility modelling. In contrast, $\Psi$ represents transient, unpredictable shocks, and $\epsilon_t$ acts merely as observational friction. The methodological challenge is therefore constructing an estimator that recovers $\Theta$ while remaining robust to both the discrete jumps and the microstructure noise.
+
+## Literature Review
+
+### Fan and Wang (2007), *"Multi-scale jump and volatility analysis for high-frequency financial data"*, JASA
+
+Fan and Wang's starting point is that existing estimators had been built for one contaminant at a time: two-scale/multi-scale realized volatility handle noise but assume a continuous price process, while bipower variation handles jumps but assumes no noise. No existing method, at the time, handled both simultaneously.
+
+Their solution is a three-step procedure. First, they wavelet-transform the observed noisy price path and show that, at a sufficiently fine resolution level, the wavelet coefficient at a jump location is bounded away from zero by an order of magnitude larger than at any continuous point, even in the presence of noise, so that a simple universal threshold isolates jump locations consistently. Second, jump sizes are estimated by averaging observations just before and after each detected jump, giving an estimator of the jump variation $\Psi$ that converges at rate $n^{-1/4}$, which is the best attainable rate given how rough a jump-diffusion sample path is. Third, having subtracted the estimated jumps from the data, they show the "jump-adjusted" series behaves, to first asymptotic order, like data from a pure continuous diffusion contaminated only by noise, meaning that existing noise-robust estimators can simply be applied to the adjusted series and inherit their usual convergence rates without any loss from the jump-removal step. They additionally propose a purely wavelet-based realized-variance estimator (WRV) and prove that, under the Haar wavelet specifically, WRV is numerically identical to the jump-adjusted two-scale realised volatility (JTSRV) for a matching partition size. Furthermore, an application to one-minute EUR–USD and JPY–USD data over seven months of 2004 finds that jumps are common, with several per day on many days, and that ignoring them materially inflates estimated volatility.
+
+## Simulation design
+
+Following Fan and Wang (2007, p. 18) as closely as possible, spot volatility follows a Geometric Ornstein–Uhlenbeck process,
+
+$$
+d\log \sigma_t^2 = -\big(0.6802 + 0.10\log\sigma_t^2\big)\,dt + 0.25\, dW_{1,t}, \qquad \mathrm{Corr}(W_t, W_{1,t}) = -0.62,
+$$
+
+simulated by an Euler scheme at $n=1440$ minute-bars over a 24-hour trading day. The continuous part of the log-price is $dX_t^c = \sigma_t\, dW_t$. To mimic the jump process, between zero and three jumps are added at $U(0,1)$ locations with $N(0,(1/30)^2)$ sizes, and the whole path is observed with additive $N(0,\eta^2)$ noise, $\eta \in [0, 0.001]$ . These parameters are chosen in the paper to match realistic FX microstructure dynamics. Because we work throughout in log-price, the implied price level $S_t = e^{X_t}$ is strictly positive by construction. It is to be noted that simulating such a process requires the use of Cholesky decomposition in order to create Brownian motions $dW_t$ and $dW_{1,t}$ that are correlated as such. A detailed explanation is found in Appendix A, and an example of a simulated day is shown below.
+
+```{r}
+library(ggplot2)
+library(latex2exp) 
+library(knitr)
+```
+
+```{r}
+
+######
+# Merton jump-diffusion simulation + Haar MODWT
+######
+
+# simulating the specified dynamics; we take the normal samples 
+# and create the brownian motions as specified in the appendix
+simulate_day <- function(n = 1440, n_jumps = 1, eta = 0.0005) {
+  dt <- 1 / n
+  rho <- -0.62
+
+  z1 <- rnorm(n)
+  z2 <- rnorm(n)
+  
+  dW  <- sqrt(dt) * z1
+  dW1 <- sqrt(dt) * (rho * z1 + sqrt(1 - rho^2) * z2)
+
+  logvar <- numeric(n + 1)
+  logvar[1] <- -6.8020  # start at mean of the process
+  for (i in 1:n) {
+    logvar[i + 1] <- logvar[i]-(0.6802 + 0.10*logvar[i]) *dt + 0.25*dW1[i]
+  }
+  sigma <- sqrt(exp(logvar[-1]))  # spot vol at each minute, length n
+
+  ## dX^c_t as stipulated
+  dXc <- sigma * dW
+  Xc  <- c(0, cumsum(dXc))   # as if we intergrated both sides; x_0 = 0
+
+  ## jump part: n_jumps uniform locations on (0,1], N(0,(1/30)^2) sizes
+  jump_times <- sort(sample(2:(n + 1), n_jumps))
+  jump_sizes <- rnorm(n_jumps, mean = 0, sd = 1 / 30)
+  
+  Xd <- numeric(n + 1) #Xd = disconttinuous jump part
+  for (l in seq_along(jump_times)) {
+    Xd[jump_times[l]:(n + 1)] <- Xd[jump_times[l]:(n + 1)] + jump_sizes[l]
+  }
+
+  X <- Xc + Xd                       # true (jump-diff) log price
+  eps <- rnorm(n + 1, sd = eta)
+  Y <- X + eps                       # observed, noisy log price
+
+  list(n = n, Xc = Xc, Xd = Xd, X = X, Y = Y, eps = eps,
+       jump_times = jump_times, jump_sizes = jump_sizes,
+       sigma = sigma, theta_true = sum(sigma^2 * dt))  # true integrated variance
+}
+```
+
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "One simulated trading day: the latent continuous path, the true jump-diffusion path, and the noisy observed path actually available to an estimator."
+
+
+
+set.seed(1408)
+day <- simulate_day(n = 1440, n_jumps = 1, eta = 0.0006)
+tt <- (0:day$n) / day$n
+
+
+par(mfrow = c(3, 1), mar = c(2, 4, 2, 1), oma = c(2, 0, 0, 0))
+# oma to add some space at the bottom. mar to add some space on 
+# the left side, bring the plots closer, less space needed on 
+#the right, and to make it more compact at top and bottom
+
+
+# Plot 1; True cont path
+plot(tt, day$Xc, type = "l", col = "navy", lwd = 1.2,
+     main = TeX("True continuous path $X^c_t$"), ylab = "Log-price", 
+     xlab = "")
+grid(nx = NULL, ny = NULL, col = "lightgray", lty = "dotted")
+abline(v = tt[day$jump_times], col = "firebrick", lty = "dashed", lwd = 1.5)
+
+# Plot 2; True jump-diff path
+plot(tt, day$X, type = "l", col = "navy", lwd = 1.2,
+     main = TeX("True jump-diffusion path $X_t$"), ylab = "Log-price", 
+     xlab = "")
+grid(nx = NULL, ny = NULL, col = "lightgray", lty = "dotted")
+abline(v = tt[day$jump_times], col = "firebrick", lty = "dashed", lwd = 1.5)
+
+# Plot 3; observed noisy path
+plot(tt, day$Y, type = "l", col = "navy", lwd = 1.2,
+     main = TeX("Observed noisy path $Y_t$"), ylab = "Log-price", 
+     xlab = "Time of day")
+grid(nx = NULL, ny = NULL, col = "lightgray", lty = "dotted")
+abline(v = tt[day$jump_times], col = "firebrick", lty = "dashed", lwd = 1.5)
+
+
+
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1, oma = c(0, 0, 0, 0))
+```
+
+## Wavelet Multiresolution Analysis
+
+The standard Discrete Wavelet Transform (DWT) relies on downsampling at each scale, which strictly restricts the sample size to a power of two ($N = 2^J$) and makes the transform shift-variant. The Maximal Overlap Discrete Wavelet Transform (MODWT) overcomes these limitations by omitting the downsampling step. Consequently, the MODWT can process arbitrary sample sizes and is strictly translation-invariant. This shift-invariance is critical in high-frequency financial econometrics, as it ensures that the volatility decomposition is not artificially distorted by the arbitrary starting point of the time series. To implement the decomposition efficiently in R, we build the MODWT pyramid algorithm from first principles. In the standard literature (Percival and Walden, 2000, p.159-204), the MODWT at level $j$ is defined generally for a filter of width $L$ via circular convolution:
+
+$$\mathcal{W}_{j,t} = \sum_{l=0}^{L-1} \tilde{h}_l \mathcal{V}_{j-1, t - l 2^{j-1} \bmod n}$$$$\mathcal{V}_{j,t} = \sum_{l=0}^{L-1} \tilde{g}_l \mathcal{V}_{j-1, t - l 2^{j-1} \bmod n}$$
+
+For the specific case of the Haar wavelet, the filter width is strictly $L=2$, and the rescaled MODWT wavelet and scaling filter vectors are $\tilde{h} = (1, -1)^T/2$ and $\tilde{g} = (1, 1)^T/2$. Defining the original time series vector as $y = (y_1, \dots, y_n)^T$, the wavelet coefficients as $W_{j,t}$, and the scaling coefficients as $V_{j,t}$, the transform is implemented by applying the pyramid algorithm pseudocode outlined in Percival and Walden (2000, p. 178) with $V_0 \equiv y$ and circular boundary handling.
+
+The decomposition isolates variation at scale $2^{j-1}$, that is in this case, an investment horizon of that many minutes, and satisfies the discrete Parseval identity:
+
+$$\sum_t y_t^2 \;=\; \sum_{j=1}^{J} \sum_t W_{j,t}^2 \;+\; \sum_t V_{J,t}^2$$
+
+This ensures no energy is created or destroyed by the transform; it is strictly reallocated across scales. This identity is the reason a rescaled filter is used, because the standard orthonormal Haar filter $(1, -1)^T/\sqrt2$ does not satisfy it once the transform is undecimated. A numerical sanity check is performed using this identity to verify that the transformation preserves energy correctly.
+
+```{r}
+
+### Manual Haar MODWT pyramid algorithm
+haar_modwt <- function(y, J) {
+  N <- length(y)
+  W <- vector("list", J)
+  V <- y
+  
+  # Rescaled MODWT Haar filters
+  h_tilde <- c(1/2, -1/2)
+  g_tilde <- c(1/2, 1/2)
+  L <- length(h_tilde)
+  
+  for (j in 1:J) {
+    Wj <- numeric(N)
+    Vj <- numeric(N)
+    
+    for (t in 0:(N - 1)) {
+      k <- t
+      Wj[t + 1] <- h_tilde[1] * V[k + 1]
+      Vj[t + 1] <- g_tilde[1] * V[k + 1]
+      
+      
+      for (n in 1:(L - 1)) {
+        k <- k - 2^(j - 1)
+        if (k < 0) {
+          k <- k %% N  # Circular boundary handling
+        }
+        Wj[t + 1] <- Wj[t + 1] + h_tilde[n + 1] * V[k + 1]
+        Vj[t + 1] <- Vj[t + 1] + g_tilde[n + 1] * V[k + 1]
+      }
+    }
+    W[[j]] <- Wj
+    V <- Vj
+  }
+  list(W = W, V = V, J = J)
+}
+
+```
+
+## Jump detection via the finest-scale wavelet coefficient
+
+Fan and Wang (2007, p.9-11) highlight that at the finest resolution level, the wavelet coefficient of a Hölder-continuous diffusion path decays like $2^{-j(\alpha+1/2)}$ near any ordinary point. For a brownian motion, $\alpha \approx 1/2$. However, while near a jump it stays bounded below by order $2^{-j/2}$; an order of magnitude larger.
+
+Concretely, the finest-scale ($j=1$) Haar coefficient is just a rescaled first difference,
+
+$$
+W_{1,t} = \frac{Y_t - Y_{t-1}}{2},
+$$
+
+and a jump at $t$ makes $|W_{1,t}|$ stand out sharply from the noise floor. Detection uses a universal threshold calibrated by an estimate of the noise scale in the paper, given by:
+
+$$
+D_n = \hat d \sqrt{2\log n}, \qquad \hat d = \frac{\mathrm{median}(|W_{1,t}|)}{0.6745}.
+$$
+
+Any $t$ with $|W_{1,t}| > D_n$ is flagged as a jump location $\hat\tau$. One important implementation detail to notes as well is that a trading day is not periodic. Thus, the MODWT recursion must not wrap the last observation onto the first when computing $W_{1,1}$. A funny thing than an earlier version of this code did was use circular boundary handling everywhere, which led to a produced a spurious "jump" at $t=1$ on every single simulated day. The fix is simply to leave $W_{1,1}$ undefined and exclude it from thresholding.
+
+```{r}
+
+#### Jump detection
+detect_jumps <- function(Y, W1 = NULL) {
+  n <- length(Y)
+  if (is.null(W1)) {
+    # Haar coefficient (Y_t - Y_{t-1})/2, non-circular
+    #a trading day has a start and an end, 
+    # so we must not wrap t=1 onto t=n.
+    W1 <- c(NA, (Y[2:n] - Y[1:(n - 1)]) / 2)
+  }
+  d  <- median(abs(W1), na.rm = TRUE) / 0.6745  
+  Dn <- d * sqrt(2 * log(n))  # threshold
+  flagged <- which(!is.na(W1) & abs(W1) > Dn)
+  list(W1 = W1, threshold = Dn, jump_idx = flagged)
+}
+```
+
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "Wavelet coefficients of the finest scale on the simulated day from Figure 1. The jump produces a single coefficient far outside the noise band. We see the coefficient spikes well above the dashed threshold band at the exact point where the true jump actually happened"
+jd <- detect_jumps(day$Y)
+
+
+plot(tt, jd$W1, type = "n",
+     ylab = expression(W["1,t"]), 
+     xlab = "Time of day")
+     
+
+mtext("Dashed = universal threshold; dotted = true jump; red dot = flagged", 
+      side = 3, line = 0.25, cex = 0.85)
+
+grid(nx = NULL, ny = NULL, col = "lightgray", lty = "dotted")
+
+# Wavelet coefficients
+lines(tt, jd$W1, col = "grey40", lwd = 1.2)
+
+# threshold 
+abline(h = c(-1, 1) * jd$threshold, col = "firebrick", lty = "dashed", 
+       lwd = 1.5)
+
+#  True jump location
+abline(v = tt[day$jump_times], col = "steelblue", lty = "dotted", lwd = 1.5)
+
+# Flagged jump points (solid red dots)
+points(tt[jd$jump_idx], jd$W1[jd$jump_idx], col = "firebrick", pch = 19,
+       cex = 1.2)
+```
+
+## Jump size estimation and data adjustment
+
+Given a detected location $\hat\tau$, the jump size is estimated by the difference of local averages just after and just before it,
+
+$$
+\hat L = \bar Y_{\hat\tau+} - \bar Y_{\hat\tau-}, \qquad
+\bar Y_{\hat\tau\pm} := \text{mean of } Y \text{ over a window of width } \delta_n \text{ just after/before } \hat\tau,
+$$
+
+with $\delta_n \sim n^{-1/2}$, implemented as a window of $\lfloor\sqrt n/4\rfloor$ observations either side. The estimated jump is then subtracted from every subsequent observation to form the jump-adjusted series,
+
+$$
+Y^*_{t_i} = Y_{t_i} - \sum_{\hat\tau_\ell \le t_i} \hat L_\ell .
+$$
+
+```{r}
+
+
+#### Jump size estimation + data adjustment 
+adjust_for_jumps <- function(Y, jump_idx, delta = NULL) {
+  
+  n <- length(Y)
+  if (is.null(delta)) delta <- max(2, round(sqrt(n) / 4))
+  
+  jump_idx <- sort(unique(jump_idx))
+  jump_sizes <- numeric(length(jump_idx))
+  
+  Xd_hat <- numeric(n)
+  for (i in seq_along(jump_idx)) {
+    tau <- jump_idx[i]
+    lo_after  <- min(n, tau + delta)
+    hi_before <- max(1, tau - delta - 1)
+    after  <- Y[tau:lo_after]
+    before <- Y[max(1, tau - delta):hi_before]
+    if (length(before) == 0) before <- Y[max(1, tau - 1)]
+    Lhat <- mean(after) - mean(before)
+    jump_sizes[i] <- Lhat
+    Xd_hat[tau:n] <- Xd_hat[tau:n] + Lhat
+  }
+  Ystar <- Y - Xd_hat
+  list(Ystar = Ystar, jump_idx = jump_idx, jump_sizes = jump_sizes,
+       jump_variation = sum(jump_sizes^2))
+}
+```
+
+```{r}
+#| fig-width: 12
+#| fig-height: 8
+#| fig-cap: "The jump-adjusted series (red) closely tracks the latent continuous path (black), while the raw observed series (grey) sits permanently offset after the jump."
+
+adj <- adjust_for_jumps(day$Y, jd$jump_idx)
+
+
+y_range <- range(c(day$Xc, day$Y, adj$Ystar), na.rm = TRUE)
+y_limits <- c(y_range[1], y_range[2] + diff(y_range) * 0.15)
+
+
+plot(tt, day$Xc, type = "n", ylim = y_limits,
+     ylab = "Log-price", xlab = "Time of day")
+
+# subtitle with dynamic jump sizes
+subtitle_text <- sprintf("True jump size = %.4f, estimated = %.4f", 
+                         day$jump_sizes, adj$jump_sizes)
+mtext(subtitle_text, side = 3, line = 0.25, cex = 0.85)
+
+# Grid
+grid(nx = NULL, ny = NULL, col = "lightgray", lty = "dotted")
+
+# Observed noisy path
+lines(tt, day$Y, col = "grey70", lwd = 1.2)
+
+#True continuous path 
+lines(tt, day$Xc, col = "black", lwd = 1.2)
+
+# Jump-adjusted path
+lines(tt, adj$Ystar, col = "#c1272d", lwd = 1.2)
+
+# 8. Legend 
+legend("top", 
+       legend = c(expression("True continuous" ~ X[t]^c), 
+                  expression("Observed" ~ Y[t] ~ "(noise+jump)"), 
+                  expression("Jump-adjusted" ~ Y[t]^"*")),
+       col = c("black", "grey70", "#c1272d"),
+       lty = 1, lwd = 1.5, horiz = TRUE, bty = "n", cex = 1)
+```
+
+## Volatility Analysis and estimator implementation
+
+Four families of estimators are implemented, directly translating the theoretical frameworks from Fan and Wang (2007, p.12–17) into code. Each of TSRV, MSRV, and WRV is computed twice: once on the raw observed path $Y$ to establish their naive baseline behaviour under jump contamination, and once on the jump-adjusted path $Y^*$ to yield the robust JTSRV, JMSRV, and jump-adjusted WRV estimators.
+
+1.  **RV (Realized Volatility):** $\displaystyle \sum_i (Y_{t_i}-Y_{t_{i-1}})^2$. While consistent for integrated volatility under a frictionless, continuous model, this naive estimator breaks down when applied to noisy high-frequency data. The accumulated microstructure noise completely dominates the true variance, rendering it inconsistent.
+
+2.  **Average Subsampled Realized Volatility (ASRV) / Two-Scale Realized Volatility (TSRV):** ASRV mitigates noise by partitioning the data into $K$ slower-sampled sub-grids: $[Y,Y]^{(K)} = \frac1K\sum_i (Y_{t_{i+K}}-Y_{t_i})^2$. The TSRV estimator applies a strict bias correction to this by subtracting the scaled finest-resolution variance: $\widehat\Theta_K = [Y,Y]^{(K)} - \frac1K[Y,Y]^{(1)}$. This subtraction explicitly cancels the microstructure noise variance bias.
+
+3.  **Multi-Scale Realized Volatility (MSRV):** To achieve an optimal $n^{-1/4}$ convergence rate, MSRV takes a variance-minimising weighted average of ASRVs over a grid of scales $K_m = m+C,\ m=1,\dots,M$, where $C=\lfloor\sqrt n\rfloor$. The implementation below utilizes the exact analytical weights $a_m$ and boundary-correction $\zeta$ defined by the authors.
+
+4.  **Wavelet Realized Volatility (WRV):** A multi-scale variance estimator that filters out microstructure noise by discarding the finest $J_n$ resolution levels. The bias-corrected estimator is defined as:
+
+$$\widehat{\Theta}_W = \text{WRV} - 2^{-J_n}[Y,Y]^{(1)}$$
+
+Rather than calculating and summing the squared wavelet coefficients across all remaining coarse scales, the implementation exploits the discrete Parseval identity established in Section 5. Because the transform strictly reallocates energy without loss, the variance of all scales coarser than $J_n$ (as well as the final residual) is perfectly encapsulated by the energy of the scaling coefficients at the exact cut-off level:$$\sum_{j=J_n+1}^{J} \sum_t W_{j,t}^2 \;+\; \sum_t V_{J,t}^2 \;=\; \sum_t V_{J_n,t}^2$$ This algebraic equivalence allows the raw wavelet variance to be computed as $\text{WRV} = 2^{J_n} \sum_t V_{J_n,t}^2$. Fan and Wang establish that when the Haar wavelet is used, this estimator is algebraically identical to the TSRV estimator evaluated with a partition number of $K=2^{J_n}$. The custom MODWT algorithm is deployed here to natively evaluate the undecimated data without requiring complex downsampling or shift-averaging logic.
+
+```{r}
+
+RV <- function(y) sum(diff(y)^2)
+
+
+ASRV <- function(y, K) {
+  n <- length(y)
+  diffs <- y[(K + 1):n] - y[1:(n - K)]
+  sum(diffs^2) / K
+}
+
+
+TSRV <- function(y, K) ASRV(y, K) - ASRV(y, 1) / K
+
+
+MSRV <- function(y, M = 11) {
+  n <- length(y)
+  C <- floor(sqrt(n))
+  Km <- (1:M) + C
+  a_m <- 12 * Km * ((1:M) - M / 2 - 0.5) / (M * (M^2 - 1))
+  zeta <- (M + C) * (C + 1) / ((n + 1) * (M - 1))
+  asrv_vals <- sapply(Km, function(K) ASRV(y, K))
+  sum(a_m * asrv_vals) + zeta * (ASRV(y, Km[1]) - ASRV(y, Km[M]))
+}
+
+
+
+WRV_modwt <- function(y, Jn) {
+  r <- diff(y)
+  out <- haar_modwt(r, Jn)
+  K <- 2^Jn
+  
+
+  # scale by K to map the filter variance back to the log-price scale.
+  wrv_val <- K * sum(out$V^2) 
+  
+  # Bias correction 
+  wrv_val - (1 / K) * ASRV(y, 1)
+}
+
+
+```
+
+### Numerical Simulation to Test Estimator Consistency
+
+The single-day example above serves as a diagnostic. However, to prove that these algorithms are robust estimators of the true latent continuous variance $\Theta$, we must examine their asymptotic distributions under both frictions across a Monte Carlo design. To validate statistical consistency, we simulate $R = 200$ replications across a uniform grid of 21 microstructure-noise levels ($\eta \in [0, 0.001]$). We evaluate three distinct jump configurations (zero, one, and three jumps per day) while holding the underlying geometric Ornstein-Uhlenbeck volatility process fixed at the Fan and Wang calibration.
+
+For each replication, we record the squared error of each estimator relative to the known integrated variance $\Theta$. The errors are then averaged across the 200 replications to obtain the Mean Squared Error (MSE). Following the presentation convention of the original paper, all reported MSEs are scaled by $10^4$.
+
+Seven estimators of $\Theta$ are evaluated, split into two categories. The unadjusted family (RV, TSRV at $K=5$ and $K=15$, and MSRV) estimates variance directly from the raw, contaminated path $Y$. The jump-adjusted family (JTSRV at $K=15$, JMSRV, and WRV) estimates variance from the cleaned path $Y^*$ after the wavelet thresholding has been applied. By Theorem 5 of Fan and Wang, WRV computed with the Haar wavelet at level $J_n = 7$ is algebraically identical to TSRV evaluated at $K = 2^7 = 128$. We exploit this equivalence inside the Monte Carlo loop to bypass rebuilding the full wavelet pyramid at every replication.
+
+```{r}
+## Monte Carlo across a uniform grid of noise levels
+
+eta_grid   <- seq(0, 0.001, length.out = 21)
+jump_cases <- c(0L, 1L, 3L)
+R_mc       <- 200
+MSE_SCALE  <- 1e4
+
+est_labels <- c(
+  RV       = "RV",
+  TSRV_5   = "TSRV (K = 5)",
+  TSRV_15  = "TSRV (K = 15)",
+  MSRV     = "MSRV",
+  JTSRV_15 = "JTSRV (K = 15)",
+  JMSRV    = "JMSRV",
+  WRV      = "WRV (Jn = 7)"
+)
+
+mc_cell <- function(eta, nj, R = R_mc) {
+  est_names <- names(est_labels)
+  errs <- matrix(NA_real_, R, length(est_names),
+                 dimnames = list(NULL, est_names))
+  for (r in seq_len(R)) {
+    sim <- simulate_day(n = 1440, n_jumps = nj, eta = eta)
+    jd  <- detect_jumps(sim$Y)
+    adj <- adjust_for_jumps(sim$Y, jd$jump_idx)
+    errs[r, ] <- c(
+      RV       = RV(sim$Y),
+      TSRV_5   = TSRV(sim$Y, 5L),
+      TSRV_15  = TSRV(sim$Y, 15L),
+      MSRV     = MSRV(sim$Y),
+      JTSRV_15 = TSRV(adj$Ystar, 15L),
+      JMSRV    = MSRV(adj$Ystar),
+      WRV      = TSRV(adj$Ystar, 128L)
+    ) - sim$theta_true
+  }
+  errs
+}
+
+set.seed(1409)
+mc_res <- do.call(rbind, lapply(jump_cases, function(nj) {
+  do.call(rbind, lapply(eta_grid, function(e) {
+    m <- mc_cell(e, nj)
+    data.frame(nj = nj, eta = e,
+               estimator = factor(colnames(m), levels = names(est_labels)),
+               mse = MSE_SCALE * colMeans(m^2))
+  }))
+}))
+```
+
+```{r}
+#| fig-width: 12
+#| fig-height: 4
+#| fig-cap: "Monte Carlo MSE ($\\times 10^4$) of each volatility estimator against the microstructure noise level, for zero (left), one (middle) and three (right) jumps. The vertical axis is logarithmic, meaning values approaching negative infinity indicate highly accurate, near-zero errors. RV and the unadjusted estimators are destroyed by jumps, while the jump-adjusted family isolates the latent integrated variance."
+
+est_order <- names(est_labels)
+est_cols <- c("grey60", "cornflowerblue", "darkorchid4", "tan4",
+              "darkorange", "firebrick", "mediumseagreen")
+
+# Use layout matrix instead of mfrow for robust rendering in Quarto
+layout(matrix(1:3, nrow = 1))
+par(mar = c(4.2, 4.6, 2, 0.6))
+
+for (i in seq_along(jump_cases)) {
+  nj <- jump_cases[i]
+  sub <- mc_res[mc_res$nj == nj, ]
+  ylo <- min(sub$mse[sub$mse > 0])
+  yhi <- max(sub$mse)
+  
+  plot(NULL,
+       xlim = range(eta_grid),
+       ylim = log10(c(ylo, yhi)) + c(-0.15, 0.15),
+       xlab = TeX("$\\eta$"),
+       ylab = TeX("$\\log_{10}\\,(MSE\\times 10^4)$"),
+       cex.lab = 1.0)
+       
+  for (e in est_order) {
+    s  <- sub[sub$estimator == e, ]
+    cl <- est_cols[which(est_order == e)]
+    lines(s$eta, log10(s$mse), col = cl, lwd = 2.5)
+    points(s$eta, log10(s$mse), col = cl, pch = 1, cex = 0.65)
+  }
+  
+  mtext(sprintf("%d jump%s", nj, if (nj == 1) "" else "s"),
+        side = 3, line = 0.4, cex = 0.95, font = 2)
+  
+  if (i == 1) {
+    legend("topleft",
+           legend = est_labels[est_order],
+           col    = est_cols,
+           lwd = 2.5, bty = "n", cex = 0.85, seg.len = 1.5)
+  }
+}
+```
+
+The 1x3 panel plot successfully replicates the behavioral distributions identified by Fan and Wang, demonstrating how the estimators rank against the true $\Theta$. The vertical axis is plotted on a $\log_{10}$ scale; therefore, highly accurate estimators with an MSE of less than 1 will drop into the negative values, and trajectories approaching negative infinity represent mathematically superior estimates.
+
+In the continuous, zero-jump case (left panel), the primary friction is purely observational noise. When $\eta$ is near zero, the naive RV estimator performs optimally, producing the lowest error. However, it skyrockets as noise is introduced, scaling with the fourth power of $\eta$. Because there are no structural jumps to remove, the unadjusted TSRV ($K=15$) and the jump-adjusted JTSRV ($K=15$) process the exact same data and overlap fully at the very bottom of the plot as the most accurate estimators. The $K=5$ partition of TSRV follows slightly above them, demonstrating that sampling frequency impacts accuracy. Sitting distinctly above these are JMSRV, WRV, and MSRV, remaining highly stable across the entire noise grid.
+
+The introduction of structural discontinuities radically alters this hierarchy. In the one-jump scenario (middle panel), the unadjusted multi-scale estimators are visibly destroyed by the jump, forming clear vertical translations far above the truth: TSRV ($K=5$) outperforms TSRV ($K=15$), which outperforms MSRV. RV starts as the worst estimator overall but continues its upward trajectory rather than tracking smoothly with the other unadjusted variants. Conversely, the jump-adjusted family successfully decouples from the jump variance and drops to the bottom of the log-scale. JTSRV ($K=15$) clearly establishes itself as the best estimator for $\Theta$, followed distinctly by WRV and JMSRV, which closely track each other.
+
+Under three jumps (right panel), the exact same ordering of the estimators remains intact. The four unadjusted estimators exhibit very consistent error trajectories despite increases in the noise level because the massive jump magnitude completely dominates the sample variance. While the three jump- adjusted estimators display more jagged trajectories as a consequence of isolating three simultaneous jumps across a smaller sample size of only 200 replications, they remain substantially superior.
+
+```{r}
+#| tbl-cap: "Monte Carlo MSE ($\\times 10^4$) at the mid-grid noise level $\\eta = 5.0\\times 10^{-4}$."
+
+eta_show <- 5e-4
+sub      <- mc_res[mc_res$eta == eta_show, ]
+tab_mat  <- matrix(NA_real_, nrow = length(est_labels),
+                   ncol = length(jump_cases),
+                   dimnames = list(unname(est_labels[names(est_labels)]),
+                                   sprintf("%d jump%s", jump_cases,
+                                   ifelse(jump_cases == 1, "", "s"))))
+for (i in seq_along(est_labels)) {
+  for (j in seq_along(jump_cases)) {
+    tab_mat[i, j] <- sub$mse[sub$estimator == names(est_labels)[i] &
+                             sub$nj        == jump_cases[j]]
+  }
+}
+kable(as.data.frame(tab_mat), digits = 6)
+```
+
+Extracting the mid-grid noise level ($\eta = 5 \times 10^{-4}$) provides concrete confirmation of the visual output. Under one jump, the mean squared error of the unadjusted multi-scale estimators increases by two full orders of magnitude, a gap that widens to three orders of magnitude under three jumps. Since the absolute scale of these errors remains small, their actual economic impact would require careful examination within a specific downstream pricing or hedging pipeline. However, there is clear quantitative evidence that the unadjusted estimators absorb structural breaks as a pronounced upward bias. The jump-adjusted variants avoid this, remaining reasonably stable across all configurations. While these promising results are currently contained within a strictly controlled simulation, they successfully validate the underlying mathematics. The logical next step for this pipeline would be to move beyond idealised Gaussian frameworks and stress-test these wavelet-thresholding estimators under realistic assumptions against live, unpredictable market data.
+
+## Appendix
+
+### Generating Correlated Sample Paths via Cholesky Decomposition
+
+In order to accurately simulate the underlying dynamics of the asset and its stochastic volatility, it is necessary to introduce statistical dependence between their respective random shocks. The leverage effect dictates that asset returns and volatility increments do not evolve in isolation; rather, they are negatively correlated. We achieve this coupled evolution by applying a Cholesky decomposition to a vector of independent Gaussian increments.
+
+**Theorem a.1 (Cholesky Decomposition)**
+
+Let $\Sigma \in \mathbb{R}^{d \times d}$ be a symmetric positive-semidefinite matrix. Then there exists a unique lower-triangular matrix $L$ with positive diagonal entries such that $\Sigma = L L^\top$.
+
+**Remark (Generating Correlated Gaussian Vectors)**
+
+Let $Z \sim \mathcal{N}(0, I_d)$ be a random vector with independent standard normal components. Defining $X = L Z$, we obtain $X \sim \mathcal{N}(0, \Sigma)$ since $\mathrm{Cov}(X) = L I_d L^\top = L L^\top = \Sigma$. Hence, $X$ is a jointly normal vector whose covariance structure is fully characterised by $\Sigma$; that is, its components are marginally Gaussian and pairwise correlated according to $\Sigma_{ij}$ (Mavuso, 2019).
+
+**Remark (Application to Correlated Shock Generation)**
+
+Let $\varepsilon_t$ denote a random vector whose components are independent $\mathcal{N}(0, 1)$ variables. Applying the Cholesky factor $L$ of the empirical covariance matrix $\Sigma$, we define $\varepsilon_t^{corr} = L \varepsilon_t$. Then $\varepsilon_t^{corr} \sim \mathcal{N}(0, \Sigma)$, and its components are therefore jointly normal with the same covariance structure as the observed market proxies. When multiple proxies are simulated together, each time step involves one random shock per asset. If these components were independent, each asset would evolve in isolation, producing unrealistic paths that ignore shared market behaviour. Transforming the independent Gaussian vector ensures that each simulated proxy inherits the appropriate degree of co-movement.
+
+### Application to the Geometric Ornstein-Uhlenbeck Volatility Model
+
+In the simulation design of this project, we require exactly two correlated Brownian motions to drive the jump-diffusion price process and the Geometric Ornstein-Uhlenbeck (GOU) spot volatility process. Let $W_t$ and $W_{1,t}$ denote the respective standard Brownian motions, with a specified correlation $\rho = -0.62$.
+
+The target covariance matrix for the standard normal shocks over a time increment $dt$ is:
+
+$$\Sigma = \begin{pmatrix} 1 & \rho \\ \rho & 1 \end{pmatrix}$$
+
+Applying Theorem A.1, the lower-triangular Cholesky factor $L$ such that $\Sigma = L L^\top$ is trivially found to be:
+
+$$L = \begin{pmatrix} 1 & 0 \\ \rho & \sqrt{1 - \rho^2} \end{pmatrix}$$
+
+Let $Z_1$ and $Z_2$ be independent standard normal random variables drawn at each time step. By multiplying the Cholesky factor $L$ with the independent vector $Z = (Z_1, Z_2)^\top$, we obtain the correlated standard normal shocks:
+
+$$\begin{pmatrix} \Delta W_t \\ \Delta W_{1,t} \end{pmatrix} = \sqrt{dt} \begin{pmatrix} 1 & 0 \\ \rho & \sqrt{1 - \rho^2} \end{pmatrix} \begin{pmatrix} Z_1 \\ Z_2 \end{pmatrix}$$
+
+This yields the explicit system of equations used in the computational simulation:
+
+$$\Delta W_t = \sqrt{dt} Z_1$$$$\Delta W_{1,t} = \sqrt{dt} \left( \rho Z_1 + \sqrt{1 - \rho^2} Z_2 \right)$$
+
+By construction, $\mathrm{Var}(\Delta W_{1,t}) = dt(\rho^2 + 1 - \rho^2) = dt$, ensuring it remains a valid Brownian increment, while the covariance simplifies to $\mathbb{E}[(\sqrt{dt} Z_1)(\sqrt{dt}(\rho Z_1 + \sqrt{1-\rho^2}Z_2))] = \rho dt$, successfully locking the correlation at the desired leverage parameter.
+
+## References
+
+-   Fan, J. Wang, Y. (2007). Multi-scale jump and volatility analysis for high-frequency financial data. *Journal of the American Statistical Association*, 102(480), 1349–1362.
+
+-   Mavuso, M. (2019), Order out of chaos i. Lecture notes, University of Cape Town.
+
+-   Percival, D.B. and Walden, A.T. 2000. *Wavelet methods for time series analysis*. Cambridge: Cambridge University Press

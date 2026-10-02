@@ -1,0 +1,246 @@
+---
+title: "Wavelets"
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| message: false
+#| warning: false
+
+library(wavethresh)
+library(splines)
+library(knitr)
+
+```
+
+Daubechies Wavelets
+
+Ingrid Daubechies developed a family of compactly supported wavelets, named according to their filter numbers. Plot the Daubechies mother wavelets for filter numbers 1 to 10 and evaluate the underlying filter coefficients and vanishing moments.
+
+**Ans:** The Daubechies family is defined by the number of vanishing moments, denoted by the filter number $N$. The associated filter contains $2N$ coefficients, with $N = 1$ corresponding to the standard Haar wavelet. Plotting the first ten mother wavelets from the extremal phase family illustrates the fundamental trade-off in wavelet construction: as $N$ increases, the wavelet becomes progressively smoother but its spatial support widens to $2N - 1$, sacrificing strict time localisation for improved frequency resolution
+
+```{r}
+#| message: false
+#| warning: false
+#| fig-width: 8
+#| fig-height: 15
+#| fig-cap: >
+#|   Daubechies mother wavelets for filter numbers 1 through 10, 
+#|   demonstrating the structural progression from the discontinuous Haar step function 
+#|   to increasingly smooth, continuous oscillations.
+
+
+par(mfrow = c(5, 2), mar = c(3, 3, 2, 1))
+for (N in 1:10) {
+  draw.default(filter.number = N, enhance = T, family = "DaubExPhase",
+               main = paste("N =", N), xlab = "", ylab = "")
+}
+par(mfrow = c(1, 1))
+```
+
+Because there is no closed-form expression for most Daubechies wavelets, they are numerically approximated using their filter coefficients $h_n$, which define the wavelet via the two-scale dilation equations:
+
+$$ \phi(x) = \sqrt{2}\sum_n h_n\,\phi(2x - n), \qquad \psi(x) = \sqrt{2}\sum_n g_n\,\phi(2x - n) $$
+
+where $g_n = (-1)^n h_{2N-1-n}$. To achieve an orthonormal basis with sparse representation capabilities, these coefficients must strictly satisfy normalisation, orthogonality to even shifts, and exactly $N$ vanishing moments. Evaluating these mathematical constraints programmatically confirms that the extracted filter weights reconstruct the desired structural properties.
+
+```{r}
+#| tbl-cap: "Verification of Daubechies filter constraints, confirming normalisation, orthogonality, and exactly N vanishing moments."
+
+
+check_filter <- function(N, family = "DaubExPhase") {
+  h <- filter.select(filter.number = N, family = family)$H
+  h_len <- length(h)
+  n <- 0:(h_len - 1)
+  
+  sum_h  <- round(sum(h), 8)
+  sum_h2 <- round(sum(h^2), 8)
+  
+
+  # Iterate through all possible even shifts (2k) and calculate 
+  # the inner product
+  max_even_shift <- 0
+  for (k in 1:(N - 1)) {
+    shift_amount <- 2 * k
+
+    original_segment <- h[1:(h_len - shift_amount)]
+    shifted_segment  <- h[(1 + shift_amount):h_len]
+    
+    inner_prod <- sum(original_segment * shifted_segment)
+    max_even_shift <- max(max_even_shift, abs(inner_prod))
+  }
+  even_shift_val <- signif(max_even_shift, 3)
+  
+  # Vanishing moments
+  moments <- sapply(0:N, function(p) {
+    numerator   <- abs(sum((-1)^n * (n^p) * h))
+    denominator <- sum(abs((n^p) * h))
+    numerator / denominator
+  })
+  
+  # The first N moments should be practically zero
+  num_vanishing <- sum(moments[1:N] < 1e-6)
+  next_moment <- signif(moments[N + 1], 3)
+  
+  data.frame(
+    N = N, 
+    length = h_len,
+    sum_h = sum_h,
+    sum_h2 = sum_h2,
+    even_shift_innerprod = even_shift_val,
+    num_vanishing = num_vanishing,
+    next_moment = next_moment
+  )
+}
+
+tab_filters <- do.call(rbind, lapply(2:10, check_filter))
+rownames(tab_filters) <- NULL
+
+kable(tab_filters)
+```
+
+### Mexican Hat Wavelet
+
+The Mexican Hat mother wavelet function is defined as $\psi(t)=(1-t^2)\exp(-t^2/2)$. How would you translate and dilate this to obtain daughter wavelets?
+
+**Ans:**
+
+Daughter wavelets are mathematically generated from a continuous mother wavelet $\psi(t)$ by applying dilation and shift translation operators. The standard transformation formula is:
+
+$$\psi_{j,k}(t) = 2^{j/2} \psi(2^j t - k)$$
+
+where $j$ represents the dyadic dilation integer that shrinks or expands the wavelet's frequency scale, $k$ represents the translation integer shifting the wavelet along the time domain, and the $2^{j/2}$ factor ensures that the $L_2$ norm of the daughter wavelet remains strictly normalised such that $\vert{}\vert{}\psi_{j,k}\vert{}\vert{} = \vert{}\vert{}\psi\vert{}\vert{}$. Substituting the Mexican Hat equation into this general formula yields the specific daughter wavelet generation function:
+
+$$\psi_{j,k}(t) = 2^{j/2} \left[ 1 - (2^j t - k)^2 \right] \exp\left( - \frac{(2^j t - k)^2}{2} \right)$$
+
+### Haar father wavelet convolved with a signal
+
+Create a signal ($Y = \sin(x)$ on 16 equally spaced points in $[0, 2\pi]$)
+
+Convolve the Haar father wavelet with the signal (2 points wavelet). Scale the wavelet so that it has L2 norm = 1. R function: `convolve`. Plot and check.
+
+**Ans:**
+
+```{r}
+X <- seq(0, 2*pi, length.out = 16)
+Y <- sin(X)
+
+haar_father <- rep(1/sqrt(2), 2)
+sqrt(sum(haar_father^2))   # L2 norm = 1
+
+conv_Y <- convolve(Y, haar_father, type = "open")
+
+conv_Y
+```
+
+```{r}
+#| fig-width: 7
+#| fig-height: 4.5
+
+plot(X, Y, type = "b", pch = 20, xlab = "x", ylab = "", ylim = c(-1.6, 1.6))
+lines(c(X, X[16] + diff(X)[1]), conv_Y, type = "b", pch = 1, col = "cyan")
+legend("topright", c("Y = sin(x)", "Haar father * Y"), pch = c(20, 1), 
+       col = c("black", "cyan"), bty = "n")
+```
+
+Note that the output is not on the same scale as $Y$: it peaks at about $1.4$ ($\sqrt{2}$), well above 1. This occurs because the sum of two adjacent values, each close to 1 at the peak, is divided by $\sqrt{2}$ rather than by 2. This specific normalisation ensures the transform is mathematically orthonormal rather than a simple geometric average.
+
+### The discrete wavelet transform from first principles
+
+Evaluating a single level of the discrete wavelet transform requires convolving the signal with the scaling filter (low-pass) and the wavelet filter (high-pass), followed by a downsampling step that retains only every second value. Using the unscaled Haar filters $(1, 1)$ and $(1, -1)$ on the specific vector $y = (1, 1, 7, 9, 2, 8, 8, 6)$ from the lecture material explicitly demonstrates this mechanical process.
+
+```{r}
+xx     <- c(1, 1, 7, 9, 2, 8, 8, 6)
+father <- c(1, 1)
+mother <- c(1, -1)
+
+# sums of pairs
+A_raw <- convolve(xx, father, type = "open")[c(2, 4, 6, 8)] 
+
+A_raw
+D_raw <- convolve(xx, mother, type = "open")[c(2, 4, 6, 8)] 
+D_raw
+```
+
+Because R's `convolve( ... , type = "open")` function natively computes a statistical cross-correlation rather than a formal mathematical convolution, it does not reverse the order of the filter coefficients before sliding them across the data. This is not an issue for the father filter $(1, 1)$, as its reflection is identical to itself. However, for an antisymmetric high-pass filter like $(1, -1)$, failing to reverse the order scrambles the formal convolution. This is easily resolved by manually wrapping the filter in rev() to reverse its elements prior to computation, completely bypassing the issue. Also worth noting that for an asymmetrical filter like the mother, using it's reverse in the function is equivalent to the negative of the regular convolve.
+
+```{r}
+D_raw <- convolve(xx, rev(mother), type = "open")[c(2, 4, 6, 8)] 
+D_raw
+```
+
+Scaling both resulting downsampled vectors by $1/\sqrt{2}$ yields the correct orthonormal coefficients.
+
+#### Implementing the full pyramidal algorithm
+
+Extending this single-step logic allows for the construction of a complete one-dimensional discrete wavelet transform function. The explicit algorithm iterates through a specified number of filter bank passes, continuously downsampling the low-pass approximation to generate progressively coarser resolutions.
+
+```{r}
+#| fig-width: 7
+#| fig-height: 8
+#| fig-cap: >
+#|   Multiresolution decomposition using the pyramidal algorithm, displaying the 
+#|   original signal X alongside the final low-pass approximation (A4) 
+#|   and the sequential levels of high-pass detail (D1 through D4) 
+
+
+dwt <- function(X, L, H, n) {
+  A <- list()
+  D <- list()
+  
+  A[[1]] <- X # Init
+  
+  for (i in 1:n) {
+    current_A <- A[[i]]
+    # Downsampling indices to retain every second value
+    idx <- seq(2, length(current_A), by = 2)
+    
+    # High-pass filter and downsample 
+    D[[i]] <- convolve(current_A, rev(H), type = "open")[idx]
+    
+    # Low-pass filter and downsample
+    A[[i+1]] <- convolve(current_A, rev(L), type = "open")[idx]
+  }
+  
+  # Package results: An, Dn, Dn-1, ..., D1
+  res <- list(An = A[[n+1]])
+  for (i in n:1) {
+    res[[paste0("D", i)]] <- D[[i]]
+  }
+  return(res)
+}
+
+# simulated noisy signal
+set.seed(1409)
+N  <- 1024
+Xs <- seq(0, 4*pi, length.out = N)
+X  <- sin(Xs) + rnorm(N, mean = 0, sd = 0.2)
+
+
+L_haar <- rep(1/sqrt(2), 2)
+H_haar <- c(1/sqrt(2), -1/sqrt(2))
+
+res <- dwt(X, L_haar, H_haar, 4)
+
+# ecomposition stack
+par(mfrow = c(6, 1), mar = c(0.5, 4, 0.5, 1), oma = c(1, 1, 1, 1))
+
+components <- list("X" = X, 
+                   "A4" = res$An, 
+                   "D4" = res$D4, 
+                   "D3" = res$D3, 
+                   "D2" = res$D2, 
+                   "D1" = res$D1)
+
+for (name in names(components)) {
+  plot(components[[name]], type = "l", xaxt = "n", yaxt = "n", 
+       ann = FALSE, col = 'blue')
+  mtext(name, side = 2, line = 1, las = 2, cex = 1.1)
+}
+
+
+par(mfrow = c(1, 1), mar = c(5, 4, 4, 2) + 0.1, oma = c(0, 0, 0, 0))
+```
+
+Structuring the output panels in a stacked layout strips away arbitrary dimensional limits and explicitly isolates the isolated wavelet variations, demonstrating how the algorithm progressively filters ambient high-frequency noise downward into the detail tiers, `D1`-`D4`, preserving the macroscopic structural continuity of the original signal in the terminal approximation, `A4`.

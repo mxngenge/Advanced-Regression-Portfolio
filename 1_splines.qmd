@@ -1,0 +1,374 @@
+---
+title: "Splines"
+---
+
+## The Construction of Splines
+
+### Question 1
+
+Simulate data from the following model, where $x$ is a vector of 100 random values sampled from $U(0,1)$. Define two knots, one at 0.33 and the other at 0.66.
+
+$y_{i}\sim N(\mu_{i},0.5^{2})$, $\mu_{i}=5+\sin(3\pi(x_{i}-0.6))$
+
+For each of the following define the basis functions / matrix and plot these functions. Then fit them to the data above and create a plot to illustrate the fitted curves, lines.
+
+-   Piecewise constant
+-   Piecewise linear
+-   Piecewise linear, and continuous at knots (broken stick)
+-   Piecewise cubic polynomial
+-   Piecewise cubic polynomial, and continuous at knots
+-   Piecewise cubic polynomial, and continuous up to 1st derivative at knots
+-   Piecewise cubic polynomial, and continuous up to 2nd derivative at knots
+-   Cubic spline (using truncated power basis)
+-   Natural spline (for the moment use the `ns()` function in packages splines)
+-   B-spline basis function (for the moment use the `bs()` function in packages splines, but see exercise below)
+
+Create another plot where you add confidence bands to one of the fitted splines (natural or B-spline).
+
+**Ans:**\
+We thus begin by simulating the data and plotting it to get a feel it.
+
+```{r}
+library(latex2exp) #my goat; for TeX
+library(splines)
+```
+
+```{r}
+#| fig-width: 10
+#| fig-height: 5
+#| fig-cap: 'Simulated relationships: $\mu$ vs $X$ (left) and $Y$ vs $\mu$ (right).'
+
+## Sim data
+set.seed(1409)
+n <- 100
+X <- runif(n)
+X <- sort(X)
+
+mu <- 5 + sin( 3*pi * (X - 0.6) )
+Y <- rnorm(n, mu, 0.5)
+
+par(mfrow = c(1,2))
+plot(X,mu, pch = 20, ylab = expression(mu))
+plot(mu,Y, pch = 20, xlab = expression(mu)) 
+
+
+par(mfrow = c(1,1))
+```
+
+Above we clearly see the explicit constructions for $\mu$ and $Y$ Given our uniform sample $X$ and below we see the relationship between $X$ and $Y$ that arises. Nothing surprising to note.
+
+```{r}
+#| fig-width: 5
+#| fig-height: 5
+#| fig-cap: 'Simulated relationship: $Y$ vs $X$'
+
+plot(X,Y, pch = 20)
+```
+
+```{r}
+knots <- c(-Inf, 0.33, 0.66, Inf)
+
+######
+# PIECEWISE CONSTANT
+######
+fit1 <- lm(Y ~ cut(X,breaks = knots)) ## cut function breaks our var into
+  # the relevant regionn; from ISLR.
+## fit <- lm(Y ~ I(X < knots[2]) + I(X >= knots[2] & X < knots[3])
+# + I(X >= knots[3]))  ## I thought this would give me
+# piecewise linear and it was actually piecewise constant
+
+preds1 <- predict(fit1)
+
+cf <- coef(fit1)
+jumps <- c(cf[1], cf[1] + cf[2], cf[1] + cf[3])
+
+#####
+# PIECEWISE LINEAR
+#####
+fit2 <- lm(Y ~ X* (I(X < knots[2]) + I(X >= knots[2] & X < knots[3])
+                   + I(X >= knots[3])))
+preds2 <- predict(fit2)
+
+#####
+# Broken stick model
+#####
+fit3 <- lm(Y ~ X + I( (X - knots[2])*(X > knots[2]) )
+           + I( (X - knots[3])*(X > knots[3]) ))
+preds3 <- predict(fit3)
+
+#####
+# piecewise cubic polynomial
+#####
+fit4 <- lm(Y ~ (X + I(X^2) + I(X^3))*( I(X < knots[2]) 
+                + I(X >= knots[2] & X < knots[3])
+                + I(X >= knots[3]) )) 
+preds4 <- predict(fit4)
+
+#####
+# piecewise cubic polynomial (continuous at knots)
+#####
+fit5 <- lm(Y ~ X + I(X^2) + I(X^3) + 
+            I((X-knots[2])*(X > knots[2])) + 
+            I((X-knots[2])^2 *(X > knots[2])) +
+            I((X-knots[2])^3 *(X > knots[2])) +
+            I((X-knots[3])* (X > knots[3])) +
+            I((X-knots[3])^2 *(X > knots[3])) +
+            I((X-knots[3])^3 *(X > knots[3]))
+            ) 
+preds5 <- predict(fit5)
+
+#####
+# piecewise cubic polynomial (continuous 1st deriv)
+#####
+fit6 <- lm(Y ~ X + I(X^2) + I(X^3) + 
+            I((X-knots[2])^2 *(X > knots[2])) +
+            I((X-knots[2])^3 *(X > knots[2])) +
+            I((X-knots[3])^2 *(X > knots[3])) +
+            I((X-knots[3])^3 *(X > knots[3]))
+            ) 
+preds6 <- predict(fit6)
+
+#####
+# piecewise cubic polynomial (continuous 2nd deriv)
+# NB: This is also a cubic spline by definition
+#####
+fit7 <- lm(Y ~ X + I(X^2) + I(X^3) + 
+            I((X-knots[2])^3 *(X > knots[2])) +
+            I((X-knots[3])^3 *(X > knots[3]))
+            ) 
+preds7 <- predict(fit7)
+
+#####
+# Natural spline
+#####
+fit8 <- lm(Y ~ ns(X, knots = c(0.33, 0.66)))
+preds8 <- predict(fit8)
+
+#####
+# B-spline (bs)
+#####
+fit9 <- lm(Y ~ bs(X, knots = c(0.33, 0.66)))
+preds9 <- predict(fit9)
+```
+
+```{r}
+#| label: fig-all-splines
+#| fig-cap: "Various piecewise polynomial and spline fits, in increasing order of complexity."
+#| fig-width: 10
+#| fig-height: 18
+
+par(mfrow = c(5, 2))
+
+### plot(X, Y, pch = 20)
+### lines(X, preds) ## overlaying with predict, note that since data is 
+# discrete it doesn't really look like a step function at the jumps
+plot(X, Y, pch = 20, main = "Piecewise Constant")
+lines(stepfun(knots[2:3], jumps), col = "cyan", lwd = 3)
+
+plot(X, Y, pch = 20, main = "Piecewise Linear")
+lines(X, preds2, col = "cyan", lwd = 3) ## unfortunately I do not have the
+# energy to figure out how to make it look like a proper piecewise
+# function right now with the step functions ;-;
+
+plot(X, Y, pch = 20, main = "Broken Stick Model")
+lines(X, preds3, col = "cyan", lwd = 3)
+
+plot(X, Y, pch = 20, main = "Piecewise Cubic Polynomial")
+lines(X, preds4, col = "cyan", lwd = 3)
+
+plot(X, Y, pch = 20, main = "Piecewise Cubic (Continuous at Knots)")
+lines(X, preds5, col = "cyan", lwd = 3)
+
+plot(X, Y, pch = 20, main = "Piecewise Cubic (Continuous 1st Deriv)")
+lines(X, preds6, col = "cyan", lwd = 3)
+
+plot(X, Y, pch = 20, 
+ main = "Piecewise Cubic (Continuous 2nd Deriv / Cubic Spline)")
+lines(X, preds7, col = "cyan", lwd = 3)
+
+plot(X, Y, pch = 20, main = "Natural Spline")
+lines(X, preds8, col = "cyan", lwd = 3)
+
+plot(X, Y, pch = 20, main = "B-spline (bs)")
+lines(X, preds9, col = "cyan", lwd = 3)
+
+par(mfrow = c(1, 1)) # Reset grid back to default
+```
+
+We can observe the progression of the splines as we loosen the underlying restrictions, moving gradually from simple step functions all the way through to cubic polynomials. It is worth noting that due to the unnecessary complexity involved in coding the exact mathematical plots, which is not the primary focus of this exercise, we simply overlaid basic plot lines rather than the explicit functions. This explicit plotting approach was only taken for the step function as it was relatively simple to implement. As a consequence of this shortcut, the regression lines appear to show discontinuous jumps at the boundaries for a couple of the models. This occurs because there is not a sufficient amount of data points for the line drawing function to accurately pinpoint the exact shift in the coefficients at the knots, but still, it is not of much issue for this exploratory exercise. It is also worth noting that the piecewise cubic polynomial that is continuous up to the second derivative is mathematically identical to a cubic spline constructed using the truncated power basis, meaning there is no need to redundantly plot both versions. There is not much else to comment on regarding these specific visualisations, but the process serves as a very good introduction to working with splines and understanding how they are practically constructed.
+
+## Question 3
+
+Construct the B-spline basis functions (see ESL Appendix pg. 186): Haar basis, linear, quadratic, cubic B-spline basis functions. $x$ between 1, 1. Create basis matrix X. Plot the basis functions.
+
+**Ans:**
+
+Following ESL Appendix (p. 186), the B-spline basis comes from the Cox-de Boor recursion. Let $M$ = order (degree + 1), interior knots $\xi_1 < \dots < \xi_K$, boundary knots $\xi_0 = -1$, $\xi_{K+1} = 1$. Augment the knots by repeating the boundaries: $$ \tau_1 = \dots = \tau_M = \xi_0, \qquad \tau_{M+j} = \xi_j \ (j = 1, \dots, K), \qquad \tau_{M+K+1} = \dots = \tau_{2M+K} = \xi_{K+1}. $$ Order 1 (Haar) is just an indicator of each interval: $$ B_{i,1}(x) = I(\tau_i \le x < \tau_{i+1}), $$ and each higher order is a weighted average of two neighbours of the order below: 2$$ B_{i,m}(x) = \frac{x - \tau_i}{\tau_{i+m-1} - \tau_i}\,B_{i,m-1}(x) + \frac{\tau_{i+m} - x}{\tau_{i+m} - \tau_{i+1}}\,B_{i+1,m-1}(x), $$ with the convention $0/0 = 0$ for the boundary knots. Order $m = 2$ gives a linear basis, $m = 3$ quadratic and $m = 4$ cubic B-splines, and a spline of order $M$ with $K$ interior knots has $K + M$ basis functions. The code below is this recursion built up one order at a time, starting from the Haar matrix, and the plot is the fina below is the final order.
+
+```{r}
+
+knots <- c(-0.33, 0.33)
+
+bsplines_crude <- function(x = seq(-1,1, length.out = 300), 
+                           knots, 
+                           degree = 3, 
+                           boundary.knots = range(x)){
+  M <- degree +1
+  K <- length(knots)
+  tau = c( rep(boundary.knots[1], M +1), knots, rep(boundary.knots[2], M+1))  
+  # just gonna default with stacking the additional 
+  # nodes at the boundaries
+
+  # Restoring the harr_basis function 
+  harr_basis <- function(i, tau, X) {
+    if (i == length(tau) - 1) {
+      return(as.numeric(X >= tau[i] & X <= tau[i+1]))
+    } else {
+      return(as.numeric(X >= tau[i] & X < tau[i+1]))
+    }
+  }
+
+  B <- sapply(1:(length(tau) - 1), function(i) {
+    harr_basis(i = i, tau = tau, X = x)
+  })
+  
+  B_init <- as.matrix(B)
+  m = 2
+  
+  while(m <= M){
+    
+      B_current <- matrix(0, nrow = dim(B_init)[1], ncol = dim(B_init)[2]-1)   
+      # should be equiv to tau - m on the cols like this
+      
+    for(i in 1:(length(tau) - m)){
+         
+      # Safety checks for div by 0
+      denom1 <- tau[i+m-1] - tau[i]
+      denom2 <- tau[i+m] - tau[i+1]
+         
+      #if/else func was causing the whole vector to  truncate to length 1 
+      # for some reason so building it manually
+      if (denom1 == 0) {
+        term1 <- 0
+      } else {
+        term1 <- ((x - tau[i]) / denom1) * B_init[,i]
+      }
+      if (denom2 == 0) {
+        term2 <- 0
+      } else {
+        term2 <- ((tau[i+m] - x) / denom2) * B_init[,i+1]
+      }
+         
+      B_current[,i] <- term1 + term2
+    }
+    
+    B_init <- B_current
+    m <- m + 1
+  }
+  
+  return(B_current)
+}
+
+x_vals <- seq(-1, 1, length.out = 300)
+my_knots <- c(-0.33, 0.33)
+
+
+B_matrix <- bsplines_crude(x = x_vals, knots = my_knots)
+
+
+matplot(x_vals, B_matrix, type = "l", lwd = 2, lty = 1, 
+        ylab = "Basis Value", xlab = "X")
+
+```
+
+## Smoothing Splines
+
+In practice (e.g. in R packages) smoothing splines are handled like the regression splines above (basically, a penalized regression spline). A large (enough) number of knots is chosen, and then a roughness penalty is added. The smoothing parameter is often chosen using GCV. So, there is nothing extra you need to do here.
+
+### ISLR Ch. 7 Exercise 1
+
+A cubic regression spline with one knot at $\xi$ can be obtained using a basis of the form $x$, $x^{2}$, $x^{3}$, $(x-\xi)_{+}^{3}$, where $(x-\xi)_{+}^{3}=(x-\xi)^{3}$ if $x>\xi$ and equals 0 otherwise. We will now show that a function of the form $f(x)=\beta_{0}+\beta_{1}x+\beta_{2}x^{2}+\beta_{3}x^{3}+\beta_{4}(x-\xi)_{+}^{3}$ is indeed a cubic regression spline, regardless of the values of $\beta_{0}$, $\beta_{1}$, $\beta_{2}$, $\beta_{3}$, $\beta_{4}$.
+
+(a) Find a cubic polynomial $f_{1}(x) = a_{1}+b_{1}x+c_{1}x^{2} + d_{1}x^{3}$ such that $f(x)=f_{1}(x)$ for all $x\le\xi$. Express $a_{1}$, $b_{1}$, $c_{1}$, $d_{1}$ in terms of $\beta_{0}$, $\beta_{1}$, $\beta_{2}$, $\beta_{3}$, $\beta_{4}$.
+
+(b) Find a cubic polynomial $f_{2}(x)=a_{2}+b_{2}x+c_{2}x^{2}+d_{2}x^{3}$ such that $f(x)=f_{2}(x)$ for all $x>\xi$. Express $a_{2}$, $b_{2}$, $c_{2}$, $d_{2}$ in terms of $\beta_{0}$, $\beta_{1}$, $\beta_{2}$, $\beta_{3}$, $\beta_{4}$. We have now established that $f(x)$ is a piecewise polynomial.
+
+(c) Show that $f_{1}(\xi)=f_{2}(\xi)$. That is, $f(x)$ is continuous at $\xi$.
+
+(d) Show that $f_{1}^{\prime}(\xi)=f_{2}^{\prime}(\xi)$. That is, $f^{\prime}(x)$ is continuous at $\xi$.
+
+(e) Show that $f_{1}^{\prime\prime}(\xi)=f_{2}^{\prime\prime}(\xi)$. That is, $f^{\prime\prime}(x)$ is continuous at $\xi$.
+
+Therefore, $f(x)$ is indeed a cubic spline.
+
+**Ans:**\
+RTP: $f$ is a cubic spline, i.e. piecewise cubic, with $f, f', f''$ continuous at $\xi$, for any $\beta_0, \dots, \beta_4$.
+
+**(a)** For $x \le \xi$, $(x-\xi)_+^3 = 0$, $$ \therefore f(x) = \beta_0 + \beta_1 x + \beta_2 x^2 + \beta_3 x^3 =: f_1(x), $$ i.e. $a_1 = \beta_0$, $b_1 = \beta_1$, $c_1 = \beta_2$, $d_1 = \beta_3$.
+
+**(b)** For $x > \xi$, $(x-\xi)_+^3 = (x-\xi)^3 = x^3 - 3\xi x^2 + 3\xi^2 x - \xi^3$, so $$ 
+\begin{aligned}
+f(x) &= \beta_0 + \beta_1 x + \beta_2 x^2 + \beta_3 x^3 + \beta_4\left(x^3 - 3\xi x^2 + 3\xi^2 x - \xi^3\right) \\
+&= \underbrace{(\beta_0 - \beta_4\xi^3)}_{a_2} + \underbrace{(\beta_1 + 3\beta_4\xi^2)}_{b_2}\,x + \underbrace{(\beta_2 - 3\beta_4\xi)}_{c_2}\,x^2 + \underbrace{(\beta_3 + \beta_4)}_{d_2}\,x^3 =: f_2(x).
+\end{aligned}
+$$ Both pieces are cubics, so $f$ is a piecewise polynomial with a single knot at $\xi$.
+
+Comparing the two parts directly. From (a) and (b), the remainder of the answers follow directly $$ f_2(x) - f_1(x) = -\beta_4\xi^3 + 3\beta_4\xi^2 x - 3\beta_4\xi x^2 + \beta_4 x^3 = \beta_4 (x - \xi)^3, $$ $$ f_2'(x) - f_1'(x) = 3\beta_4(x-\xi)^2, \qquad f_2''(x) - f_1''(x) = 6\beta_4(x-\xi). $$
+
+**(c)** Continuity: $$ f_2(\xi) - f_1(\xi) = \beta_4(\xi - \xi)^3 = 0 \ \Rightarrow\ f_1(\xi) = f_2(\xi). $$
+
+**(d)** First derivative: $$ f_2'(\xi) - f_1'(\xi) = 3\beta_4(\xi - \xi)^2 = 0 \ \Rightarrow\ f_1'(\xi) = f_2'(\xi). $$
+
+**(e)** Second derivative: $$ f_2''(\xi) - f_1''(\xi) = 6\beta_4(\xi - \xi) = 0 \ \Rightarrow\ f_1''(\xi) = f_2''(\xi). $$
+
+So $f$ is a cubic spline. $\blacksquare$
+
+Note that this also tells us where the continuity *stops*: $f_2''' - f_1''' = 6\beta_4 \neq 0$, so the third derivative jumps by $6\beta_4$ at the knot.
+
+### Sketching the basis function questions
+
+**Model 1 Question:** Suppose we fit a curve with basis functions $b_{1}(X)=X, b_{2}(X)=(X-1)^{2}I(X\ge1)$. (Note that $I(X\ge1)$ equals 1 for $X\ge1$ and 0 otherwise). We fit the linear regression model $Y=\beta_{0}+\beta_{1}b_{1}(X)+\beta_{2}b_{2}(X)+e$. Sketch the estimated curve between $X=-2$ and $X=2$. Note the intercepts, slopes, and other relevant information.
+
+**Ans:** Note that the tutorial sheet drops the coefficient estimates for the first one, but the question in ISLR (Ch. 7 Exercise 3) uses the following estimates: $\hat\beta_0 = 1$, $\hat\beta_1 = 1$, $\hat\beta_2 = -2$.
+
+**Model 1:** $b_1(X) = X$, $b_2(X) = (X-1)^2 I(X \ge 1)$, $Y = \beta_0 + \beta_1 b_1(X) + \beta_2 b_2(X) + \epsilon$.
+
+Split at $X = 1$: $$ \begin{aligned}
+X < 1&: \quad \hat{f}(X) = 1 + X \\
+X \ge 1&: \quad \hat{f}(X) = 1 + X - 2(X-1)^2
+\end{aligned} $$ At the knot, $$ \hat f(1^-) = 2 = \hat f(1^+), \qquad \hat f'(1^-) = 1, \quad \hat f'(1^+) = 1 - 4(X-1)\big|_{X=1} = 1, $$ so continuous with continuous slope, while $\hat f''$ jumps from $0$ to $2\hat\beta_2 = -4$. The parabola peaks where $\hat f' = 0$: $$ 1 - 4(X-1) = 0 \ \Rightarrow\ X = 1.25, \qquad \hat f(1.25) = 1 + 1.25 - 2(0.25)^2 = 2.125. $$ End points: $\hat f(-2) = -1$, $\hat f(0) = 1$, $\hat f(2) = 1 + 2 - 2 = 1$.
+
+```{r}
+#| fig-width: 5
+#| fig-height: 5
+
+fA <- function(x) 1 + x - 2*(x - 1)^2*(x >= 1)
+
+xx <- seq(-2, 2, length.out = 500)
+plot(xx, fA(xx), type = "l", lwd = 3, col = "cyan", xlab = "X",
+     ylab = TeX("$\\hat{f}(X)$"))
+abline(v = 1, lty = 3)
+points(c(-2, 0, 1, 1.25, 2), fA(c(-2, 0, 1, 1.25, 2)), pch = 20)
+```
+
+**Model 2:** $b_1(X) = I(0 \le X \le 2) - (X-1)I(1 \le X \le 2)$, $b_2(X) = (X-3)I(3 \le X \le 4) + I(4 < X \le 5)$, with $\hat\beta_0 = 1$, $\hat\beta_1 = 1$, $\hat\beta_2 = 3$.
+
+On $[-2, 2]$, $b_2 = 0$ since its support is $(3, 5]$, so only $b_1$ matters: $$ \begin{aligned}
+X < 0&: \quad b_1 = 0 \ \Rightarrow\ \hat f = 1 \\
+0 \le X < 1&: \quad b_1 = 1 \ \Rightarrow\ \hat f = 2 \\
+1 \le X \le 2&: \quad b_1 = 1 - (X-1) = 2 - X \ \Rightarrow\ \hat f = 3 - X
+\end{aligned} $$
+
+```{r}
+#| fig-width: 5
+#| fig-height: 5
+
+plot(NA, xlim = c(-2, 2), ylim = c(0.5, 2.5), xlab = "X", 
+     ylab = TeX("$\\hat{f}(X)$"))
+segments(-2, 1, 0, 1, col = "cyan", lwd = 3)
+segments(0, 2, 1, 2, col = "cyan", lwd = 3)
+segments(1, 2, 2, 1, col = "cyan", lwd = 3)
+points(0, 1, pch = 1)    # open
+points(0, 2, pch = 19)   # closed
+abline(v = c(0, 1), lty = 3)
+```
